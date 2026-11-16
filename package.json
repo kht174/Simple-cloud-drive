@@ -11,14 +11,28 @@
     "node": ">=18"
   },
   "keywords": [
+    "self-hosted",
+    "cloud-drive",
     "netdisk",
     "webdav",
+    "file-server",
     "file-sharing",
-    "webview-preview",
-    "express"
+    "file-preview",
+    "markdown",
+    "code-highlight",
+    "express",
+    "nodejs"
   ],
   "author": "netdisk-share contributors",
   "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/kht174/Simple-cloud-drive.git"
+  },
+  "bugs": {
+    "url": "https://github.com/kht174/Simple-cloud-drive/issues"
+  },
+  "homepage": "https://github.com/kht174/Simple-cloud-drive#readme",
   "dependencies": {
     "express": "^4.21.2",
     "multer": "^2.0.2"
