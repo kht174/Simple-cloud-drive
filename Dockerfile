@@ -10,7 +10,8 @@ COPY public ./public
 COPY netdisk.sh ./
 
 ENV PORT=3000 \
-    NETDISK_DIR=/app/storage
+    NETDISK_DIR=/app/storage \
+    NETDISK_HOST=0.0.0.0
 RUN mkdir -p /app/storage /app/config
 
 VOLUME ["/app/storage"]

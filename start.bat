@@ -20,6 +20,8 @@ if not exist "node_modules" (
 )
 
 echo Starting netdisk at http://127.0.0.1:3000
+echo On first run, read the setup token in another terminal:
+echo   type .initial-setup-token
 echo Press Ctrl+C to stop.
 node server.js
 pause

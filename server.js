@@ -5,35 +5,101 @@ const fs = require('fs');
 const crypto = require('crypto');
 
 const PORT = Number(process.env.PORT) || 3000;
-const ROOT = path.resolve(process.env.NETDISK_DIR || path.join(__dirname, 'storage'));
+// 默认只监听本机；对外暴露请用反向代理，或显式设置 NETDISK_HOST=0.0.0.0
+const HOST = process.env.NETDISK_HOST || process.env.HOST || '127.0.0.1';
+// 存储根目录（启动时取 realpath，后续所有路径校验都以它为准）
+const ROOT = (() => {
+  const p = path.resolve(process.env.NETDISK_DIR || path.join(__dirname, 'storage'));
+  fs.mkdirSync(p, { recursive: true });
+  return fs.realpathSync(p);
+})();
+// 配置文件路径可用 NETDISK_CONFIG 覆盖（Docker 场景把配置放到独立目录，避免单文件挂载被创建成目录）
 const CONFIG_PATH = path.resolve(process.env.NETDISK_CONFIG || path.join(__dirname, 'config.json'));
-// 默认不信任任何代理。只有明确设置 TRUST_PROXY 时才采信 X-Forwarded-*，
-// 否则客户端可以伪造 X-Forwarded-For 无限次绕过登录限流。
-const TRUST_PROXY = process.env.TRUST_PROXY || '';
+const SETUP_TOKEN_PATH = path.join(path.dirname(CONFIG_PATH), '.initial-setup-token');
+const isInstaboxRuntime = Boolean(process.env.INSTABOX_TERM_SESSION || process.env.INSTABOX_TERM_DIR);
+const proxySetting = process.env.TRUST_PROXY || process.env.NETDISK_TRUST_PROXY;
+const TRUST_PROXY = String(proxySetting || (isInstaboxRuntime ? '1' : '')).trim();
+const TRUST_PROXY_ENABLED = Boolean(TRUST_PROXY) && !/^(0|false|off|no)$/i.test(TRUST_PROXY);
 const SESSION_COOKIE = 'nd_sess';
 const SESSION_TTL_MS = 12 * 60 * 60 * 1000; // 12 小时
 const MAX_PREVIEW_BYTES = 4 * 1024 * 1024; // 4 MiB
-const LOGIN_MAX_FAILS = 20; // 超过后硬封禁；此前用递增等待节流
+const LOGIN_MAX_FAILS = 20; // 单 IP 超过后硬封禁；此前用递增等待节流
+const LOGIN_GLOBAL_MAX_FAILS = 100; // 全局失败上限，防分布式爆破
 const LOGIN_WINDOW_MS = 15 * 60 * 1000;
-
-fs.mkdirSync(ROOT, { recursive: true });
-fs.mkdirSync(path.dirname(CONFIG_PATH), { recursive: true });
 
 /* ---------------------------------- 配置 ---------------------------------- */
 
+function httpError(status, message) {
+  return Object.assign(new Error(message), { status });
+}
+
+// 配置路径被当成目录挂载（Docker 单文件挂载的经典坑）时给出明确提示，而不是写文件时报 EISDIR
+if (fs.existsSync(CONFIG_PATH) && fs.statSync(CONFIG_PATH).isDirectory()) {
+  console.error(
+    `配置路径 ${CONFIG_PATH} 是一个目录，无法作为配置文件使用。\n` +
+      '请指定一个文件路径（环境变量 NETDISK_CONFIG=/path/to/config.json），' +
+      '或把该目录换成指向文件的挂载。'
+  );
+  process.exit(1);
+}
+fs.mkdirSync(path.dirname(CONFIG_PATH), { recursive: true });
+const tokenDirectory = fs.realpathSync(path.dirname(SETUP_TOKEN_PATH));
+const publicDirectory = fs.realpathSync(path.join(__dirname, 'public'));
+if (
+  tokenDirectory === publicDirectory ||
+  tokenDirectory.startsWith(publicDirectory + path.sep)
+) {
+  throw new Error('初始化令牌目录不能位于 public 静态资源目录内');
+}
+
+function writeSetupToken(token) {
+  const tempPath = `${SETUP_TOKEN_PATH}.${process.pid}.${crypto.randomBytes(6).toString('hex')}.tmp`;
+  try {
+    fs.writeFileSync(tempPath, `${token}\n`, { encoding: 'utf8', flag: 'wx', mode: 0o600 });
+    if (process.platform !== 'win32') fs.chmodSync(tempPath, 0o600);
+    fs.renameSync(tempPath, SETUP_TOKEN_PATH);
+  } catch (err) {
+    try {
+      fs.unlinkSync(tempPath);
+    } catch (cleanupErr) {
+      if (cleanupErr.code !== 'ENOENT') {
+        console.error(`[警告] 无法清理临时初始化令牌文件 ${tempPath}: ${cleanupErr.message}`);
+      }
+    }
+    throw new Error(`无法安全写入首次初始化令牌 ${SETUP_TOKEN_PATH}: ${err.message}`, { cause: err });
+  }
+}
+
+function removeSetupTokenFile() {
+  try {
+    fs.unlinkSync(SETUP_TOKEN_PATH);
+  } catch (err) {
+    if (err.code !== 'ENOENT') {
+      console.error(`[警告] 无法删除已失效的初始化令牌文件 ${SETUP_TOKEN_PATH}: ${err.message}`);
+    }
+  }
+}
+
 function loadConfig() {
   let cfg = {};
+  let generatedSetupToken = false;
   if (fs.existsSync(CONFIG_PATH)) {
+    const raw = fs.readFileSync(CONFIG_PATH, 'utf8');
     try {
-      cfg = JSON.parse(fs.readFileSync(CONFIG_PATH, 'utf8'));
+      cfg = JSON.parse(raw);
     } catch (err) {
-      // 配置文件损坏时不要静默重置：备份原件并明确告警
-      console.error(`[警告] ${CONFIG_PATH} 解析失败，已备份为 .bad 并重建（原会话与密码将失效）: ${err.message}`);
+      const backupPath = `${CONFIG_PATH}.bad`;
       try {
-        fs.copyFileSync(CONFIG_PATH, `${CONFIG_PATH}.bad`);
-      } catch {
-        /* ignore */
+        fs.copyFileSync(CONFIG_PATH, backupPath, fs.constants.COPYFILE_EXCL);
+      } catch (backupErr) {
+        throw new Error(
+          `配置文件解析失败，且无法备份原文件到 ${backupPath}: ${backupErr.message}`,
+          { cause: backupErr }
+        );
       }
+      console.error(
+        `[警告] ${CONFIG_PATH} 解析失败，原文件已备份到 ${backupPath}；重新生成配置会使旧密码和会话失效: ${err.message}`
+      );
       cfg = {};
     }
   }
@@ -47,13 +113,34 @@ function loadConfig() {
     delete cfg.password;
   }
   if (process.env.NETDISK_PASSWORD) {
-    const { salt, hash } = hashPassword(process.env.NETDISK_PASSWORD);
-    cfg.passwordSalt = salt;
-    cfg.passwordHash = hash;
-    cfg.passwordVersion += 1; // 环境变量重设密码同样让旧会话失效
+    const pw = process.env.NETDISK_PASSWORD;
+    const sameAsCurrent =
+      cfg.passwordHash &&
+      cfg.passwordSalt &&
+      crypto.scryptSync(pw, cfg.passwordSalt, 64).toString('hex') === cfg.passwordHash;
+    if (!sameAsCurrent) {
+      const { salt, hash } = hashPassword(pw);
+      cfg.passwordSalt = salt;
+      cfg.passwordHash = hash;
+      // 密码确实变了：递增版本号，作废所有已签发的会话
+      cfg.passwordVersion += 1;
+    }
     delete cfg.password;
+    delete cfg.setupTokenHash;
+  }
+  if (cfg.passwordHash && cfg.passwordSalt) {
+    delete cfg.setupTokenHash;
+    removeSetupTokenFile();
+  } else if (!cfg.setupTokenHash || !fs.existsSync(SETUP_TOKEN_PATH)) {
+    const token = crypto.randomBytes(32).toString('base64url');
+    cfg.setupTokenHash = crypto.createHash('sha256').update(token).digest('hex');
+    writeSetupToken(token);
+    generatedSetupToken = true;
   }
   saveConfig(cfg);
+  if (generatedSetupToken) {
+    console.warn(`[初始化] 首次设置令牌已安全写入 ${SETUP_TOKEN_PATH}，可用 ./netdisk.sh show-setup-token 查看。`);
+  }
   return cfg;
 }
 
@@ -87,13 +174,22 @@ function passwordMatches(input) {
   return candidate.length === expected.length && crypto.timingSafeEqual(candidate, expected);
 }
 
+function setupTokenMatches(input) {
+  if (typeof input !== 'string' || input.length !== 43 || !/^[A-Za-z0-9_-]+$/.test(input)) {
+    return false;
+  }
+  if (!CONFIG.setupTokenHash) return false;
+  const expected = Buffer.from(CONFIG.setupTokenHash, 'hex');
+  const actual = crypto.createHash('sha256').update(input).digest();
+  return expected.length === actual.length && crypto.timingSafeEqual(expected, actual);
+}
+
 function passwordPolicyError(pw) {
   if (typeof pw !== 'string' || pw.length === 0) return '请输入新密码';
   if (pw.length < 6) return '密码至少 6 位';
   if (pw.length > 128) return '密码过长';
   return null;
 }
-
 
 /* --------------------------------- 会话票据 -------------------------------- */
 
@@ -157,14 +253,27 @@ function isAuthed(req) {
 /* --------------------------------- 登录限流 -------------------------------- */
 
 const loginFails = new Map();
+let globalFails = { count: 0, first: Date.now() };
+
+function sweepLoginFails() {
+  const now = Date.now();
+  for (const [ip, rec] of loginFails) {
+    if (now - rec.first > LOGIN_WINDOW_MS) loginFails.delete(ip);
+  }
+  if (now - globalFails.first > LOGIN_WINDOW_MS) globalFails = { count: 0, first: now };
+}
+const sweepTimer = setInterval(sweepLoginFails, 60 * 1000);
+if (typeof sweepTimer.unref === 'function') sweepTimer.unref();
 
 function clientIp(req) {
-  // 默认使用 TCP 层地址（客户端无法伪造）；仅当配置了可信代理时才用 req.ip
-  const ip = TRUST_PROXY ? req.ip : req.socket.remoteAddress;
-  return String(ip || 'unknown');
+  // 仅在显式配置了可信代理时，req.ip 才来自 X-Forwarded-For
+  return String(req.ip || (req.socket && req.socket.remoteAddress) || 'unknown');
 }
 
 function loginBlocked(ip) {
+  sweepLoginFails();
+  // 全局上限：即使攻击者轮换 IP，也无法无限次爆破同一个密码
+  if (globalFails.count >= LOGIN_GLOBAL_MAX_FAILS) return true;
   const rec = loginFails.get(ip);
   if (!rec) return false;
   if (Date.now() - rec.first > LOGIN_WINDOW_MS) {
@@ -175,11 +284,17 @@ function loginBlocked(ip) {
 }
 
 function noteLoginFail(ip) {
+  const now = Date.now();
   const rec = loginFails.get(ip);
-  if (!rec || Date.now() - rec.first > LOGIN_WINDOW_MS) {
-    loginFails.set(ip, { count: 1, first: Date.now() });
+  if (!rec || now - rec.first > LOGIN_WINDOW_MS) {
+    loginFails.set(ip, { count: 1, first: now });
   } else {
     rec.count += 1;
+  }
+  if (now - globalFails.first > LOGIN_WINDOW_MS) {
+    globalFails = { count: 1, first: now };
+  } else {
+    globalFails.count += 1;
   }
 }
 
@@ -193,77 +308,122 @@ function loginDelay(ip) {
 /* ---------------------------------- 应用 ---------------------------------- */
 
 const app = express();
-if (TRUST_PROXY) {
-  app.set('trust proxy', /^\d+$/.test(TRUST_PROXY) ? Number(TRUST_PROXY) : TRUST_PROXY);
+app.disable('x-powered-by');
+
+// Instabox 提供固定的一跳反向代理；其他环境默认不信任代理头。
+if (TRUST_PROXY_ENABLED) {
+  const hops = Number(TRUST_PROXY);
+  if (Number.isFinite(hops) && hops > 0) app.set('trust proxy', hops);
+  else if (TRUST_PROXY.toLowerCase() === 'true') app.set('trust proxy', true);
+  else app.set('trust proxy', TRUST_PROXY);
 }
+
 app.use(express.json({ limit: '1mb' }));
 
 app.use((req, res, next) => {
   res.setHeader('X-Content-Type-Options', 'nosniff');
   res.setHeader('Referrer-Policy', 'no-referrer');
-  res.setHeader('X-Frame-Options', 'SAMEORIGIN');
+  res.setHeader(
+    'Content-Security-Policy',
+    "default-src 'self'; img-src 'self' data: blob:; object-src 'none'; base-uri 'none'; frame-ancestors 'self'; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline'; form-action 'self'"
+  );
   next();
 });
 
-// 同源校验：SameSite=Lax 挡得住跨站 POST，挡不住同站不同端口页面发起的 CSRF。
-// 浏览器同源 fetch/XHR 一定带 Origin 且与 Host 一致；curl 等无 Origin 的请求放行。
-const MUTATING_METHODS = new Set(['POST', 'PUT', 'PATCH', 'DELETE']);
-app.use((req, res, next) => {
-  if (!MUTATING_METHODS.has(req.method)) return next();
-  const origin = req.headers.origin;
-  if (!origin) return next();
-  let originHost;
-  try {
-    originHost = new URL(origin).host.toLowerCase();
-  } catch {
-    return res.status(403).json({ ok: false, error: '请求来源不合法' });
-  }
-  const forwardedHost = TRUST_PROXY ? String(req.headers['x-forwarded-host'] || '').split(',')[0].trim() : '';
-  const host = String(forwardedHost || req.headers.host || '').toLowerCase();
-  if (!host || originHost !== host) {
-    return res.status(403).json({ ok: false, error: '请求来源与主机不匹配' });
-  }
-  return next();
-});
+/* ------------------------------ CSRF / 同源校验 ----------------------------- */
 
-function illegalPath() {
-  const err = new Error('非法路径');
-  err.status = 400;
-  return err;
+const SAFE_METHODS = new Set(['GET', 'HEAD', 'OPTIONS']);
+
+// SameSite=Lax 挡得住「跨站」请求，但挡不住「同站跨端口」（例如同一主机名的另一个端口上的恶意页面）。
+// 因此写操作再校验一次 Origin / Sec-Fetch-Site。
+function sameOriginRequest(req) {
+  const site = String(req.headers['sec-fetch-site'] || '').toLowerCase();
+  if (site === 'cross-site') return false;
+
+  const forwardedHost = TRUST_PROXY_ENABLED ? req.headers['x-forwarded-host'] : '';
+  const host = String(forwardedHost || req.headers.host || '')
+    .split(',')[0]
+    .trim()
+    .toLowerCase();
+  const protocol = `${req.protocol}:`;
+  const origin = req.headers.origin;
+  if (origin) {
+    try {
+      const u = new URL(origin);
+      return Boolean(host) && u.host.toLowerCase() === host && u.protocol === protocol;
+    } catch {
+      return false;
+    }
+  }
+
+  // 没有 Origin 时退回 Referer（老浏览器）
+  const referer = req.headers.referer;
+  if (referer) {
+    try {
+      const u = new URL(referer);
+      return Boolean(host) && u.host.toLowerCase() === host && u.protocol === protocol;
+    } catch {
+      return false;
+    }
+  }
+
+  // 非浏览器客户端（curl / 脚本）不带这两个头，放行
+  return true;
 }
 
-function resolvePath(rel) {
-  // query / body 可能被解析成数组或对象；NUL 字节会让 fs 抛未捕获异常
-  if (rel != null && typeof rel !== 'string') throw illegalPath();
-  if (typeof rel === 'string' && rel.includes('\0')) throw illegalPath();
-  const abs = path.resolve(ROOT, rel || '');
-  if (abs !== ROOT && !abs.startsWith(ROOT + path.sep)) throw illegalPath();
-
-  // 字符串前缀判断挡不住符号链接：对已存在的最深层路径做 realpath 校验，
-  // 防止 storage 内的软链接把读写 / 删除引到根目录之外。
-  const realRoot = fs.realpathSync(ROOT);
-  let cur = abs;
-  for (;;) {
-    let real;
-    try {
-      real = fs.realpathSync(cur);
-    } catch {
-      const parent = path.dirname(cur);
-      if (parent === cur) break;
-      cur = parent;
-      continue;
-    }
-    if (real !== realRoot && !real.startsWith(realRoot + path.sep)) throw illegalPath();
-    break;
+app.use((req, res, next) => {
+  if (SAFE_METHODS.has(req.method)) return next();
+  if (!sameOriginRequest(req)) {
+    return res.status(403).json({ ok: false, error: '跨站请求已被拒绝' });
   }
-  return abs;
+  next();
+});
+
+/* --------------------------------- 路径处理 -------------------------------- */
+
+function isInsideRoot(abs) {
+  return abs === ROOT || abs.startsWith(ROOT + path.sep);
+}
+
+// 字符串前缀比对挡不住符号链接越界：这里解析 realpath 后再判断是否仍在 ROOT 之内
+function resolvePath(rel) {
+  if (typeof rel !== 'string') throw httpError(400, '路径参数不合法');
+  const abs = path.resolve(ROOT, rel);
+  if (!isInsideRoot(abs)) throw httpError(400, '非法路径');
+
+  // 找到最深的、真实存在的祖先目录，解析其中的符号链接
+  let probe = abs;
+  const tail = [];
+  while (!fs.existsSync(probe)) {
+    const parent = path.dirname(probe);
+    if (parent === probe) break;
+    tail.unshift(path.basename(probe));
+    probe = parent;
+  }
+  let real;
+  try {
+    real = fs.realpathSync(probe);
+  } catch {
+    real = probe;
+  }
+  if (!isInsideRoot(real)) throw httpError(400, '非法路径');
+
+  const resolved = tail.length ? path.join(real, ...tail) : real;
+  if (!isInsideRoot(resolved)) throw httpError(400, '非法路径');
+  return resolved;
 }
 
 function relOf(abs) {
   return path.relative(ROOT, abs).split(path.sep).join('/');
 }
 
-const WINDOWS_RESERVED = /^(con|prn|aux|nul|com[1-9]|lpt[1-9])(\..*)?$/i;
+// query 参数必须是单个字符串（?path[]=x 会得到数组，必须拒绝）
+function queryPath(req) {
+  const v = req.query.path;
+  if (v === undefined) return '';
+  if (typeof v !== 'string') throw httpError(400, '路径参数不合法');
+  return v;
+}
 
 function validName(name) {
   return (
@@ -272,10 +432,7 @@ function validName(name) {
     name.length <= 255 &&
     name !== '.' &&
     name !== '..' &&
-    !/[\/\\\0]/.test(name) &&
-    !/[\x00-\x1f]/.test(name) && // 控制字符
-    !/[. ]$/.test(name) && // Windows 会静默去掉尾随点 / 空格
-    !WINDOWS_RESERVED.test(name) // Windows 设备名
+    !/[\/\\\0]/.test(name)
   );
 }
 
@@ -332,11 +489,11 @@ const TEXT_EXT = new Set([
   '.conf', '.env', '.properties', '.yml', '.yaml', '.toml', '.json', '.json5', '.jsonc',
   '.js', '.mjs', '.cjs', '.jsx', '.ts', '.tsx', '.css', '.scss', '.less', '.vue', '.svelte',
   '.html', '.htm', '.xhtml', '.xml', '.svg', '.plist', '.gradle', '.pro', '.cmake', '.mk',
-  '.java', '.kt', '.kts', '.scala', '.groovy', '.smali', '.js', '.c', '.h', '.cc', '.cpp',
+  '.java', '.kt', '.kts', '.scala', '.groovy', '.dart', '.smali', '.js', '.c', '.h', '.cc', '.cpp',
   '.hpp', '.cs', '.go', '.rs', '.py', '.rb', '.php', '.pl', '.pm', '.lua', '.swift', '.m',
   '.sh', '.bash', '.zsh', '.fish', '.ps1', '.bat', '.cmd', '.sql', '.asm', '.s', '.ld',
   '.diff', '.patch', '.gitignore', '.editorconfig', '.pem', '.crt', '.cer', '.gyp',
-  '.srt', '.vtt', '.ipynb', '.tex', '.dockerfile', '.makefile',
+  '.srt', '.vtt', '.ipynb', '.tex', '.dockerfile', '.makefile', '.nginx', '.apache', '.conf',
 ]);
 
 const NAME_EXT = new Map([
@@ -355,18 +512,18 @@ function previewKind(abs) {
   return { kind: 'unsupported', mime: null, ext };
 }
 
+// RFC 5987：ASCII 回退名 + UTF-8 百分号编码，保证中文文件名在各浏览器下都不乱码
 function contentDisposition(name, disposition) {
   const ascii = name.replace(/[^\x20-\x7e]/g, '_').replace(/["\\]/g, '_');
-  // encodeURIComponent 不编码 ' ! ( ) *，这些字符会破坏 RFC 5987 的 filename* 参数
-  const encoded = encodeURIComponent(name).replace(/[!'()*]/g, (c) => `%${c.charCodeAt(0).toString(16).toUpperCase()}`);
+  const encoded = encodeURIComponent(name).replace(
+    /['()*]/g,
+    (c) => '%' + c.charCodeAt(0).toString(16).toUpperCase()
+  );
   return `${disposition}; filename="${ascii}"; filename*=UTF-8''${encoded}`;
 }
 
 function isSecureRequest(req) {
-  if (req.secure === true) return true;
-  if (!TRUST_PROXY) return false; // 不信任代理时不采信客户端自报的 X-Forwarded-Proto
-  const proto = String(req.headers['x-forwarded-proto'] || '').split(',')[0].trim();
-  return proto.toLowerCase() === 'https';
+  return req.secure === true;
 }
 
 function sessionCookie(req, token, maxAgeSeconds) {
@@ -425,10 +582,14 @@ app.post('/api/logout', (req, res) => {
 
 // 设置（首次创建）或修改访问密码
 app.post('/api/password', (req, res) => {
-  const { currentPassword, newPassword } = req.body || {};
+  const { currentPassword, newPassword, setupToken } = req.body || {};
   const isSetup = !passwordIsSet();
 
-  if (!isSetup) {
+  if (isSetup) {
+    if (!setupTokenMatches(setupToken)) {
+      return res.status(403).json({ ok: false, error: '首次设置令牌无效，请从服务器获取最新令牌' });
+    }
+  } else {
     // 已设置密码：修改需要先验证当前密码（登录态 + 当前密码双重确认）
     if (!isAuthed(req)) {
       return res.status(401).json({ ok: false, error: '需要访问密码', authRequired: true });
@@ -453,8 +614,11 @@ app.post('/api/password', (req, res) => {
   CONFIG.passwordHash = hash;
   CONFIG.passwordVersion += 1; // 使所有旧会话失效
   delete CONFIG.password;
+  delete CONFIG.setupTokenHash;
   saveConfig(CONFIG);
+  removeSetupTokenFile();
   loginFails.clear();
+  globalFails = { count: 0, first: Date.now() };
 
   // 重新签发当前会话，保证改完密码后不会被踢出
   res.setHeader('Set-Cookie', sessionCookie(req, issueToken(), Math.floor(SESSION_TTL_MS / 1000)));
@@ -469,12 +633,24 @@ app.use('/api', (req, res, next) => {
 
 /* --------------------------------- 存储接口 -------------------------------- */
 
+// multipart 文件名按 latin1 传输，需要还原成 UTF-8
+function decodeUploadName(raw) {
+  const s = String(raw == null ? '' : raw);
+  try {
+    const utf8 = Buffer.from(s, 'latin1').toString('utf8');
+    if (utf8 && !utf8.includes('\ufffd')) return utf8;
+  } catch {
+    /* ignore */
+  }
+  return s;
+}
+
 const storage = multer.diskStorage({
   destination(req, file, cb) {
     try {
-      const dir = resolvePath(req.query.path);
+      const dir = resolvePath(queryPath(req));
       if (!fs.existsSync(dir) || !fs.statSync(dir).isDirectory()) {
-        return cb(Object.assign(new Error('目标文件夹不存在'), { status: 400 }));
+        return cb(httpError(400, '目标文件夹不存在'));
       }
       cb(null, dir);
     } catch (err) {
@@ -482,12 +658,16 @@ const storage = multer.diskStorage({
     }
   },
   filename(req, file, cb) {
-    const original = path.basename(file.originalname.replace(/\\/g, '/'));
-    if (!validName(original)) {
-      return cb(Object.assign(new Error('文件名不合法'), { status: 400 }));
+    try {
+      const original = path.basename(decodeUploadName(file.originalname).replace(/\\/g, '/'));
+      if (!validName(original)) {
+        return cb(httpError(400, '文件名不合法'));
+      }
+      const dir = resolvePath(queryPath(req));
+      cb(null, uniqueName(dir, original));
+    } catch (err) {
+      cb(err);
     }
-    const dir = resolvePath(req.query.path);
-    cb(null, uniqueName(dir, original));
   },
 });
 
@@ -498,17 +678,13 @@ const upload = multer({
 
 app.get('/api/list', (req, res, next) => {
   try {
-    const rel = req.query.path || '';
+    const rel = queryPath(req);
     const abs = resolvePath(rel);
     if (!fs.existsSync(abs)) {
-      const err = new Error('文件夹不存在');
-      err.status = 404;
-      throw err;
+      throw httpError(404, '文件夹不存在');
     }
     if (!fs.statSync(abs).isDirectory()) {
-      const err = new Error('不是文件夹');
-      err.status = 400;
-      throw err;
+      throw httpError(400, '不是文件夹');
     }
     const entries = fs
       .readdirSync(abs, { withFileTypes: true })
@@ -573,13 +749,12 @@ app.post('/api/upload', upload.array('files', 100), (req, res) => {
 
 app.get('/api/download', (req, res, next) => {
   try {
-    const abs = resolvePath(req.query.path);
+    const abs = resolvePath(queryPath(req));
     if (!fs.existsSync(abs) || !fs.statSync(abs).isFile()) {
-      const err = new Error('文件不存在');
-      err.status = 404;
-      throw err;
+      throw httpError(404, '文件不存在');
     }
-    res.download(abs, path.basename(abs));
+    res.setHeader('Content-Disposition', contentDisposition(path.basename(abs), 'attachment'));
+    res.sendFile(abs);
   } catch (err) {
     next(err);
   }
@@ -587,11 +762,9 @@ app.get('/api/download', (req, res, next) => {
 
 app.get('/api/preview', (req, res, next) => {
   try {
-    const abs = resolvePath(req.query.path);
+    const abs = resolvePath(queryPath(req));
     if (!fs.existsSync(abs) || !fs.statSync(abs).isFile()) {
-      const err = new Error('文件不存在');
-      err.status = 404;
-      throw err;
+      throw httpError(404, '文件不存在');
     }
     const st = fs.statSync(abs);
     const name = path.basename(abs);
@@ -626,21 +799,15 @@ app.post('/api/mkdir', (req, res, next) => {
   try {
     const { path: rel = '', name } = req.body || {};
     if (!validName(name)) {
-      const err = new Error('文件夹名不合法');
-      err.status = 400;
-      throw err;
+      throw httpError(400, '文件夹名不合法');
     }
     const dir = resolvePath(rel);
     if (!fs.existsSync(dir) || !fs.statSync(dir).isDirectory()) {
-      const err = new Error('目标文件夹不存在');
-      err.status = 400;
-      throw err;
+      throw httpError(400, '目标文件夹不存在');
     }
     const target = path.join(dir, name);
     if (fs.existsSync(target)) {
-      const err = new Error('同名文件夹已存在');
-      err.status = 409;
-      throw err;
+      throw httpError(409, '同名文件夹已存在');
     }
     fs.mkdirSync(target);
     res.json({ ok: true });
@@ -653,15 +820,11 @@ app.post('/api/delete', (req, res, next) => {
   try {
     const { path: rel } = req.body || {};
     if (!rel) {
-      const err = new Error('不能删除根目录');
-      err.status = 400;
-      throw err;
+      throw httpError(400, '不能删除根目录');
     }
     const abs = resolvePath(rel);
     if (abs === ROOT || !fs.existsSync(abs)) {
-      const err = new Error('目标不存在');
-      err.status = 404;
-      throw err;
+      throw httpError(404, '目标不存在');
     }
     fs.rmSync(abs, { recursive: true, force: true });
     res.json({ ok: true });
@@ -674,21 +837,15 @@ app.post('/api/rename', (req, res, next) => {
   try {
     const { path: rel, name } = req.body || {};
     if (!rel || !validName(name)) {
-      const err = new Error('参数不合法');
-      err.status = 400;
-      throw err;
+      throw httpError(400, '参数不合法');
     }
     const abs = resolvePath(rel);
     if (!fs.existsSync(abs)) {
-      const err = new Error('目标不存在');
-      err.status = 404;
-      throw err;
+      throw httpError(404, '目标不存在');
     }
     const target = path.join(path.dirname(abs), name);
     if (target !== abs && fs.existsSync(target)) {
-      const err = new Error('同名文件已存在');
-      err.status = 409;
-      throw err;
+      throw httpError(409, '同名文件已存在');
     }
     fs.renameSync(abs, target);
     res.json({ ok: true });
@@ -705,11 +862,14 @@ app.use((err, req, res, next) => {
   res.status(status).json({ ok: false, error: err.message || '服务器错误' });
 });
 
-app.listen(PORT, '0.0.0.0', () => {
-  console.log(`Netdisk listening on http://0.0.0.0:${PORT}`);
+app.listen(PORT, HOST, () => {
+  console.log(`Netdisk listening on http://${HOST}:${PORT}`);
   console.log(
     passwordIsSet()
       ? 'Netdisk password: 已设置（可在网页内修改）'
-      : 'Netdisk password: 未设置，首次访问网页时创建'
+      : 'Netdisk password: 未设置，需服务器生成的一次性初始化令牌'
   );
+  if (HOST !== '0.0.0.0' && HOST !== '::') {
+    console.log('提示: 当前只监听本机。对外访问请用反向代理，或设置 NETDISK_HOST=0.0.0.0。');
+  }
 });

@@ -12,14 +12,14 @@
 
 | 项目 | 状态 |
 | --- | --- |
-| 预设访问密码 | **无**。首次打开网页时由使用者现场创建 |
+| 预设访问密码 | **无**。首次启动生成一次性初始化令牌，持有者才能创建密码 |
 | 会话密钥（`sessionSecret`） | **无**。首次启动时由程序随机生成，只存在本机 `config.json` |
 | 密码存储形式 | 仅 scrypt 派生散列 + 随机盐，**不存明文** |
-| 仓库内是否含任何人的数据 | **否**。不含 `storage/` 目录、不含 `config.json`、不含 `node_modules/`、不含日志 |
+| 仓库内是否含任何人的数据 | **否**。不含 `storage/` 目录、不含 `config.json`、初始化令牌、`node_modules/` 或日志 |
 
 ### 部署后第一次打开会看到什么
 
-打开网页 → 显示 **「创建访问密码」** → 输入新密码（至少 6 位）并确认 → 直接进入网盘。
+首次启动后，在服务器上运行 `./netdisk.sh show-setup-token` 查看一次性令牌；打开网页时输入该令牌、新密码（至少 6 位）并确认，即可进入网盘。设置密码后令牌立即失效。
 
 ### 想替对方预设密码？
 
@@ -36,11 +36,11 @@ NETDISK_PASSWORD='你给朋友的密码' ./deploy.sh
 
 ### ⚠️ 安全提醒
 
-网页地址本身就是对外的凭据。**第一个访问该地址的人会成为密码持有者**。所以：
+首次创建密码需要服务器生成的一次性令牌；只有能访问服务器文件或管理命令的人才能取得它。因此：
 
-- 要分享给别人之前，**自己先访问一次并创建密码**，再把「网址 + 密码」一起发出去；
+- **不要分享初始化令牌**；创建访问密码后再分享「网址 + 密码」；
 - 或者用上面的 `NETDISK_PASSWORD` 预设密码后再分享；
-- 忘记密码：在服务器上执行 `./netdisk.sh reset-password` 清除，下次访问重新创建。
+- 忘记密码：在服务器上执行 `./netdisk.sh reset-password`，重启后用新的初始化令牌重新创建。
 
 ---
 
@@ -59,6 +59,7 @@ cd Simple-cloud-drive
 > npm install --omit=dev
 > node server.js
 > ```
+> 首次设置时，在另一个 PowerShell 窗口运行 `Get-Content .\.initial-setup-token` 获取令牌。
 > `.sh` 脚本需要 WSL / Git Bash；`start.bat` 是原生 Windows 入口。
 > 从压缩包解压（而非 `git clone`）时，Linux / macOS 下先执行一次 `chmod +x *.sh`。
 
@@ -66,7 +67,7 @@ cd Simple-cloud-drive
 
 1. 检查 Node.js 版本（需 ≥ 18）
 2. `npm install --omit=dev` 安装依赖
-3. 生成 `config.json`（随机 `sessionSecret`，**不含密码**）
+3. 生成 `config.json`（随机 `sessionSecret`，**不含密码**）与一次性初始化令牌文件
 4. 后台启动服务并写 `server.pid`
 5. 打印本地访问地址和三种对外暴露方式
 
@@ -110,7 +111,7 @@ node server.js                # 前台运行；Ctrl+C 退出
 
 ## 2. 把网盘暴露到公网
 
-服务默认监听 `0.0.0.0:3000`（所有网卡），**并非仅本机**；请自行用防火墙 / 反向代理限制访问范围。三种常见暴露方式：
+服务默认仅监听 `127.0.0.1:3000`；部署到容器或需要局域网访问时，显式设置 `NETDISK_HOST=0.0.0.0` 并用防火墙 / 反向代理限制访问范围。三种常见暴露方式：
 
 **① 已有 Nginx / Caddy** —— 反代最推荐，能顺带拿到 HTTPS：
 
@@ -142,7 +143,7 @@ ssh -R 80:localhost:3000 serveo.net                # SSH 隧道
 
 **③ 家用宽带** —— 需要把 3000 端口映射到公网，并自行处理 TLS。
 
-> 生产环境建议用 Nginx/Caddy + Let's Encrypt。在反代之后部署时设置 `TRUST_PROXY=1`，服务端才会采信 `X-Forwarded-Proto` / `X-Forwarded-For` 并给会话 Cookie 加上 `Secure`；默认不信任代理，避免客户端伪造请求头绕过登录限流。
+> 生产环境建议用 Nginx/Caddy + Let's Encrypt。Instabox 环境会自动信任一跳平台代理；其他反代部署需显式设置 `TRUST_PROXY=1`。直连公网时不要开启，以免客户端伪造转发头绕过登录限流。
 
 ---
 
@@ -154,7 +155,7 @@ ssh -R 80:localhost:3000 serveo.net                # SSH 隧道
 | 下载 | 单文件下载，保留原文件名 |
 | 目录 | 新建 / 重命名 / 删除文件夹，路径面包屑导航 |
 | 搜索 | 当前文件夹内按文件名过滤 |
-| 访问密码 | 全站保护，首次访问创建，网页内可随时修改 |
+| 访问密码 | 全站保护，需服务器一次性令牌完成首次创建，网页内可随时修改 |
 | 在线预览 | 文本/代码高亮、Markdown 渲染、图片、PDF |
 | 会话 | 12 小时有效，「退出」按钮立即清除本机状态 |
 
@@ -216,6 +217,7 @@ netdisk-share/
 | `passwordVersion` | 密码版本号，改密码后自增，用于作废旧会话 |
 | `passwordSalt` | 密码散列盐值 |
 | `passwordHash` | scrypt 派生的密码散列（**不是明文**） |
+| `setupTokenHash` | 首次设置令牌的 SHA-256 散列；完成密码设置后删除 |
 
 环境变量覆盖：
 
@@ -224,8 +226,12 @@ netdisk-share/
 | `PORT` | 监听端口，默认 `3000` |
 | `NETDISK_PASSWORD` | 每次启动都重设访问密码并作废旧会话（建议只在首次部署设置，之后移除） |
 | `NETDISK_DIR` | 文件存储根目录，默认 `./storage` |
+| `NETDISK_HOST` | 监听地址，默认 `127.0.0.1`；容器/局域网部署通常设为 `0.0.0.0` |
 | `NETDISK_CONFIG` | 配置文件路径，默认 `./config.json`（Docker 用具名卷时需要） |
-| `TRUST_PROXY` | 可信代理跳数或地址，仅在反代之后设置（如 `1`）。默认关闭，不采信 `X-Forwarded-*` |
+| `TRUST_PROXY` / `NETDISK_TRUST_PROXY` | 可信代理跳数或地址，如 `1`。Instabox 自动设置一跳；其他环境默认关闭，不采信 `X-Forwarded-*` |
+| `INSTABOX_TERM_SESSION` / `INSTABOX_TERM_DIR` | Instabox 环境标记；识别到任一非空值时自动信任一跳平台代理 |
+
+首次设置令牌保存在配置文件同目录的 `.initial-setup-token`（Unix-like 系统权限 600；Windows 继承目录权限）。Docker Compose 默认使用具名卷，可运行 `docker compose exec netdisk cat /app/config/.initial-setup-token` 查看；密码设置成功后令牌文件会删除。不要将令牌或 `netdisk.env` 提交或分享。
 
 ---
 
@@ -245,8 +251,8 @@ netdisk-share/
 
 ## 7. 常见问题
 
-**Q：朋友打开网址提示「创建访问密码」，正常吗？**
-正常。这是你还没预设密码时的预期行为——他创建的就是网盘的密码。你可以先自己创建或用 `NETDISK_PASSWORD` 预设后再分享。
+**Q：朋友打开网址提示「创建访问密码」，还需要什么？**
+首次设置需要服务器上的一次性初始化令牌。运行 `./netdisk.sh show-setup-token` 获取；不要将令牌分享给他人。也可以通过 `NETDISK_PASSWORD` 预设密码。
 
 **Q：忘记密码怎么办？**
 服务器上执行 `./netdisk.sh reset-password && ./netdisk.sh restart`，然后重新访问网页创建新密码。
@@ -280,7 +286,7 @@ netdisk-share/
 ## 9. 已知限制
 
 - 单密码、单用户模型：没有账号体系、权限分级、分享链接与审计日志，适合个人或小范围临时共享。
-- 首次部署存在「抢注窗口」：在设置密码前，第一个访问 `/api/password` 的人会成为密码持有者。上线前务必先自行创建密码或用 `NETDISK_PASSWORD` 预设。
+- 首次创建密码必须持有服务器一次性令牌；令牌文件位于配置文件同目录，权限为 600，设置成功后删除。
 - 默认 HTTP 明文：Cookie 与文件内容在公网传输前请务必配 HTTPS。
 - 大文件上传不校验磁盘剩余空间，也不做断点续传。
 - 网盘内可存放任意文件；预览时不会主动执行文件内容，但下载后的文件由使用者自行负责。

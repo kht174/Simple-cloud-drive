@@ -1,6 +1,8 @@
 # 运行时生成（含会话密钥与密码散列，不可泄露）
 config.json
 config.json.bad
+netdisk.env
+**/.initial-setup-token
 
 # 用户文件
 storage/

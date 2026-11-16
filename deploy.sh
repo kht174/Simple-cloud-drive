@@ -14,6 +14,20 @@ set -euo pipefail
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 cd "$SCRIPT_DIR"
 
+if [[ -f netdisk.env ]]; then
+  set -a
+  # shellcheck disable=SC1091
+  . ./netdisk.env
+  set +a
+fi
+
+if [[ -n "${INSTABOX_TERM_SESSION:-}${INSTABOX_TERM_DIR:-}" &&
+      -z "${TRUST_PROXY:-}" && -z "${NETDISK_TRUST_PROXY:-}" ]]; then
+  export NETDISK_TRUST_PROXY=1
+  printf '\nNETDISK_TRUST_PROXY=1\n' >> netdisk.env
+  chmod 600 netdisk.env
+fi
+
 PORT="${PORT:-3000}"
 STORAGE_DIR="$SCRIPT_DIR/storage"
 CONFIG_FILE="${NETDISK_CONFIG:-config.json}"
@@ -113,11 +127,13 @@ if [[ -n "$PRESET_PASSWORD" ]]; then
     cfg.passwordHash = crypto.scryptSync(process.argv[1], salt, 64).toString('hex');
     cfg.passwordVersion = (cfg.passwordVersion || 1) + 1;
     delete cfg.password;
+    delete cfg.setupTokenHash;
     fs.writeFileSync(p, JSON.stringify(cfg, null, 2) + '\n');
+    fs.chmodSync(p, 0o600);
   " "$PRESET_PASSWORD"
   ok "已预设访问密码（以 scrypt 散列存储，不含明文）"
 else
-  ok "未预设密码 —— 首次打开网页时会提示创建"
+  ok "未预设密码 —— 启动后需使用服务器生成的一次性初始化令牌"
 fi
 
 # ---------------------------------------------------------------- 5. 启动
@@ -147,9 +163,23 @@ ok "服务已启动 (pid $(cat server.pid))"
 # ---------------------------------------------------------------- 6. 结果
 printf "\n${C_GRN}部署完成${C_OFF}\n\n"
 printf "  ${C_BLU}本地访问${C_OFF}   http://127.0.0.1:%s\n" "$PORT"
-printf "  ${C_BLU}局域网访问${C_OFF} http://<本机内网IP>:%s\n" "$PORT"
+if [[ "${NETDISK_HOST:-}" == "0.0.0.0" || "${NETDISK_HOST:-}" == "::" ]]; then
+  printf "  ${C_BLU}局域网访问${C_OFF} http://<本机内网IP>:%s\n" "$PORT"
+fi
 printf "  ${C_BLU}存储目录${C_OFF}   %s\n" "$STORAGE_ABS"
 printf "  ${C_BLU}配置文件${C_OFF}   %s\n\n" "$CONFIG_FILE"
+PASSWORD_IS_SET="$(node -e "
+  const fs = require('fs');
+  try {
+    const config = JSON.parse(fs.readFileSync(process.env.NETDISK_CONFIG || 'config.json', 'utf8'));
+    process.stdout.write(config.passwordHash && config.passwordSalt ? '1' : '0');
+  } catch (e) {
+    process.stdout.write('0');
+  }
+")"
+if [[ "$PASSWORD_IS_SET" != "1" ]]; then
+  printf "  ${C_BLU}首次设置令牌${C_OFF} 使用 ./netdisk.sh show-setup-token 查看（创建密码后失效）\n\n"
+fi
 
 cat <<EOF
 ${C_DIM}对外暴露（选一种）：${C_OFF}
@@ -160,5 +190,5 @@ ${C_DIM}对外暴露（选一种）：${C_OFF}
 ${C_DIM}常用命令：${C_OFF}
   ./netdisk.sh status | restart | stop | reset-password
 EOF
-printf "${C_YEL}  重要：第一个访问该网址的人会成为密码持有者。${C_OFF}\n"
-printf "${C_DIM}  分享给别人之前请先自己打开网页创建密码，或用 ./deploy.sh --password 'xxx' 预设。${C_OFF}\n"
+printf "${C_YEL}  重要：首次创建密码必须使用服务器上的一次性初始化令牌。${C_OFF}\n"
+printf "${C_DIM}  请勿将该令牌分享给他人；也可用 NETDISK_PASSWORD 环境变量预设密码。${C_OFF}\n"

@@ -1,20 +1,23 @@
 {
   "name": "netdisk-share",
-  "version": "1.0.0",
+  "version": "1.1.1",
   "description": "轻量可自托管网页网盘：上传/下载/目录管理，访问密码保护，支持文本代码高亮、Markdown、图片与 PDF 在线预览",
   "main": "server.js",
   "scripts": {
-    "start": "node server.js"
+    "start": "node server.js",
+    "test": "node --test"
   },
   "engines": {
     "node": ">=18"
   },
   "keywords": [
     "netdisk",
+    "webdav",
     "file-sharing",
     "webview-preview",
     "express"
   ],
+  "author": "netdisk-share contributors",
   "license": "MIT",
   "dependencies": {
     "express": "^4.21.2",

@@ -260,6 +260,9 @@
     <div class="field" id="lockConfirmWrap" style="display:none; margin-top:10px">
       <input id="lockConfirm" type="password" placeholder="再次输入新密码" autocomplete="new-password" />
     </div>
+    <div class="field" id="setupTokenWrap" style="display:none; margin-top:10px">
+      <input id="setupToken" type="password" placeholder="服务器首次设置令牌" autocomplete="off" spellcheck="false" />
+    </div>
     <button class="btn primary" id="lockSubmit">
       <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="4" y="10" width="16" height="11" rx="2"/><path d="M8 10V7a4 4 0 0 1 8 0v3"/></svg>
       访问
@@ -548,9 +551,11 @@ function renderLock() {
   $('#lockInput').setAttribute('autocomplete', setup ? 'new-password' : 'current-password');
   $('#lockConfirmWrap').style.display = setup ? 'block' : 'none';
   $('#lockConfirm').value = '';
+  $('#setupTokenWrap').style.display = setup ? 'block' : 'none';
+  $('#setupToken').value = '';
   $('#lockSubmit').lastChild.textContent = setup ? '创建并进入' : ' 访问';
   $('#lockHint').textContent = setup
-    ? '创建后可在网页内随时修改，请牢记该密码'
+    ? '请先从服务器获取一次性初始化令牌；创建后即可在网页内修改密码'
     : '密码由网盘所有者提供';
 }
 
@@ -578,7 +583,7 @@ async function doLogin() {
     try {
       const r = await fetch('/api/password', {
         method: 'POST', headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ newPassword: pwd }),
+        body: JSON.stringify({ newPassword: pwd, setupToken: $('#setupToken').value.trim() }),
       });
       const data = await r.json().catch(() => ({}));
       if (!r.ok || data.ok === false) { lockMsg.textContent = data.error || '创建失败'; return; }
@@ -617,6 +622,7 @@ $('#lockToggle').onclick = () => {
 };
 lockInput.onkeydown = (e) => { if (e.key === 'Enter') doLogin(); };
 $('#lockConfirm').onkeydown = (e) => { if (e.key === 'Enter') doLogin(); };
+$('#setupToken').onkeydown = (e) => { if (e.key === 'Enter') doLogin(); };
 
 $('#logoutBtn').onclick = async () => {
   try { await api('/api/logout', { method: 'POST' }); } catch {}

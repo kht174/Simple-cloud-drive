@@ -103,6 +103,7 @@
 <main id="main"><div class="status">加载中…</div></main>
 
 <script src="/vendor/highlight.min.js"></script>
+<script src="/vendor/highlight-langs.js"></script>
 <script src="/vendor/marked.min.js"></script>
 <script src="/vendor/purify.min.js"></script>
 <script>
@@ -122,13 +123,49 @@ const EXT_LANG = {
   md: 'markdown', markdown: 'markdown', mdx: 'markdown',
   css: 'css', scss: 'scss', less: 'less', vue: 'xml', svelte: 'xml',
   yml: 'yaml', yaml: 'yaml', toml: 'ini', ini: 'ini', cfg: 'ini', conf: 'ini',
-  sh: 'bash', bash: 'bash', zsh: 'bash', fish: 'bash', ps1: 'powershell', bat: 'batch', cmd: 'batch',
+  sh: 'bash', bash: 'bash', zsh: 'bash', fish: 'bash', ps1: 'powershell', bat: 'dos', cmd: 'dos',
   py: 'python', java: 'java', kt: 'kotlin', kts: 'kotlin', scala: 'scala', groovy: 'groovy',
   c: 'c', h: 'cpp', cc: 'cpp', cpp: 'cpp', hpp: 'cpp', cs: 'csharp', go: 'go', rs: 'rust',
   rb: 'ruby', php: 'php', pl: 'perl', pm: 'perl', lua: 'lua', swift: 'swift', dart: 'dart',
   sql: 'sql', diff: 'diff', patch: 'diff', dockerfile: 'dockerfile', makefile: 'makefile',
   gradle: 'groovy', properties: 'properties', tex: 'latex',
+  nginx: 'nginx', apache: 'apache',
 };
+
+// highlight.js 的 common 包只带 36 种语言，未注册的语言会让 highlight() 抛异常 → 整页白屏。
+// 这里统一降级：未注册 → 自动识别 → 纯文本，保证内容永远可见。
+function highlightCode(text, lang) {
+  if (window.hljs && lang && lang !== 'plaintext' && hljs.getLanguage(lang)) {
+    try {
+      return hljs.highlight(text, { language: lang }).value;
+    } catch (e) {
+      /* 落到下面的兜底 */
+    }
+  }
+  if (window.hljs && lang && lang !== 'plaintext') {
+    try {
+      return hljs.highlightAuto(text).value;
+    } catch (e) {
+      /* 继续兜底 */
+    }
+  }
+  return escapeHtml(text);
+}
+
+// Markdown 渲染：marked 允许原始 HTML 直接透传，必须经 DOMPurify 净化后才能写进 innerHTML。
+// 万一 purify.min.js 没加载成功，只渲染纯文本，绝不放行原始 HTML。
+function renderMarkdown(text) {
+  const raw = marked.parse(text, { mangle: false, headerIds: false });
+  if (window.DOMPurify && typeof DOMPurify.sanitize === 'function') {
+    return DOMPurify.sanitize(raw, {
+      USE_PROFILES: { html: true },
+      ADD_ATTR: ['target', 'rel'],
+      FORBID_TAGS: ['style', 'form', 'input', 'button', 'textarea', 'select', 'option', 'iframe', 'object', 'embed'],
+      FORBID_ATTR: ['style'],
+    });
+  }
+  return '<pre class="code">' + escapeHtml(text) + '</pre>';
+}
 
 function extOf(name) {
   const lower = name.toLowerCase();
@@ -159,7 +196,7 @@ function showLock(msg) {
     <h3>${setup ? '创建访问密码' : '需要访问密码'}</h3>
     <p>${setup ? '首次访问，请为这个网盘设置一个访问密码' : '该网盘已启用访问密码，请输入密码以查看此文件'}</p>
     <input id="pvPwd" type="password" placeholder="${setup ? '设置新密码（至少 6 位）' : '请输入访问密码'}" autocomplete="${setup ? 'new-password' : 'current-password'}" />
-    ${setup ? '<input id="pvPwd2" type="password" placeholder="再次输入新密码" autocomplete="new-password" style="margin-top:10px" />' : ''}
+    ${setup ? '<input id="pvPwd2" type="password" placeholder="再次输入新密码" autocomplete="new-password" style="margin-top:10px" /><input id="pvSetupToken" type="password" placeholder="服务器首次设置令牌" autocomplete="off" spellcheck="false" style="margin-top:10px" />' : ''}
     <button class="btn primary" id="pvGo">${setup ? '创建并查看' : '查看'}</button>
     <div class="err" id="pvErr">${escapeHtml(msg || '')}</div>
   </div>`);
@@ -174,7 +211,7 @@ function showLock(msg) {
       try {
         const r = await fetch('/api/password', {
           method: 'POST', headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ newPassword: v }),
+          body: JSON.stringify({ newPassword: v, setupToken: $('#pvSetupToken').value.trim() }),
         });
         const data = await r.json().catch(() => ({}));
         if (!r.ok || data.ok === false) { err.textContent = data.error || '创建失败'; return; }
@@ -196,6 +233,7 @@ function showLock(msg) {
   $('#pvGo').onclick = go;
   pwd.onkeydown = (e) => { if (e.key === 'Enter') go(); };
   if (setup) $('#pvPwd2').onkeydown = (e) => { if (e.key === 'Enter') go(); };
+  if (setup) $('#pvSetupToken').onkeydown = (e) => { if (e.key === 'Enter') go(); };
 }
 
 async function load() {
@@ -240,14 +278,7 @@ async function load() {
   const lang = EXT_LANG[ext] || 'plaintext';
 
   if (lang === 'markdown') {
-    // marked 会原样透传文件里的原始 HTML（含 onerror / javascript: 链接），
-    // 直接 innerHTML 就是存储型 XSS，必须先净化。
-    const rawHtml = marked.parse(text, { mangle: false, headerIds: false });
-    const html = DOMPurify.sanitize(rawHtml, {
-      USE_PROFILES: { html: true },
-      FORBID_TAGS: ['style', 'form', 'input', 'iframe', 'object', 'embed'],
-      FORBID_ATTR: ['style'],
-    });
+    const html = renderMarkdown(text);
     setMain(`<div class="card"><div class="md" id="mdView">${html}</div></div>`);
     $('#mdView').querySelectorAll('a[href]').forEach((a) => {
       if (!a.getAttribute('href').startsWith('#')) {
@@ -256,7 +287,12 @@ async function load() {
       }
     });
     $('#mdView').querySelectorAll('pre code').forEach((b) => {
-      try { hljs.highlightElement(b); } catch (e) { /* ignore */ }
+      try {
+        if (window.hljs) hljs.highlightElement(b);
+      } catch (e) {
+        // 未注册的语言：保留原始文本，不要让整页白屏
+        b.classList.remove('hljs');
+      }
     });
     $('#copyBtn').style.display = '';
     $('#copyBtn').onclick = () => copy(text);
@@ -264,16 +300,7 @@ async function load() {
     return;
   }
 
-  // highlight.js 只内置了 36 种语言；未注册的语言会抛异常导致整页白屏，
-  // 这里统一回退为转义后的纯文本。
-  let html;
-  try {
-    html = hljs.getLanguage(lang)
-      ? hljs.highlight(text, { language: lang }).value
-      : escapeHtml(text);
-  } catch (e) {
-    html = escapeHtml(text);
-  }
+  const html = highlightCode(text, lang);
   setMain(`<div class="card"><pre class="code" id="codeView">${html}</pre></div>`);
   $('#copyBtn').style.display = '';
   $('#copyBtn').onclick = () => copy(text);

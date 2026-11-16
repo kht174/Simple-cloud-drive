@@ -26,7 +26,7 @@
 ./deploy.sh
 ```
 
-执行内容：检查 Node → `npm ci` → 建 `storage/` → 生成 `config.json`（随机 `sessionSecret`）→ 后台启动 → 打印地址。
+执行内容：检查 Node → `npm ci` → 建 `storage/` → 生成 `config.json`（随机 `sessionSecret`）→ 后台启动并生成权限为 600 的一次性初始化令牌 → 打印地址。
 
 参数：
 
@@ -44,7 +44,7 @@ docker compose up -d
 docker compose logs -f
 ```
 
-数据在 `./storage/`，配置持久化在具名卷 `netdisk-config`（容器内 `/app/config/config.json`）。**不要把宿主机尚不存在的 `config.json` 直接做成单文件 bind mount**：Docker 会自动创建一个目录挂进去，服务端写配置时会报 `EISDIR` 而启动失败。
+数据在 `./storage/`，配置与初始化令牌持久化在具名卷 `netdisk-config`（容器内 `/app/config/`）。首次启动后运行 `docker compose exec netdisk cat /app/config/.initial-setup-token` 获取令牌。**不要把宿主机尚不存在的 `config.json` 直接做成单文件 bind mount**：Docker 会自动创建一个目录挂进去，服务端写配置时会报 `EISDIR` 而启动失败。
 
 ### 2.3 Docker 单条命令
 
@@ -60,6 +60,8 @@ docker run -d --name netdisk --restart unless-stopped \
 ```
 
 > `netdisk-config` 是具名卷，首次运行自动创建。`NETDISK_PASSWORD` 每次启动都会重设密码并作废旧会话，首次设置后建议移除并重启容器。
+
+未设置 `NETDISK_PASSWORD` 时，可用 `docker exec netdisk cat /app/config/.initial-setup-token` 读取首次令牌；设置密码后该令牌失效并删除。
 
 ### 2.4 手动 / PM2 / systemd
 
@@ -153,7 +155,7 @@ sudo certbot --nginx -d files.example.com
 ```
 
 > `client_max_body_size` 必须 ≥ 应用的上传上限（20G），否则大文件会返回 413。
-> 反代部署时设置 `TRUST_PROXY=1`，`X-Forwarded-Proto: $scheme` 才会让服务端给会话 Cookie 加上 `Secure`；HTTP 明文访问时不会带上 Cookie。直连公网时不要开启该变量。
+> 反代部署时设置 `TRUST_PROXY=1`，`X-Forwarded-Proto: $scheme` 才会让服务端给会话 Cookie 加上 `Secure`；Instabox 环境会自动信任一跳平台代理。直连公网时不要开启该变量。
 
 ### 3.2 Caddy
 
@@ -182,10 +184,10 @@ cloudflared tunnel --url http://localhost:3000
 
 | 场景 | 操作 |
 | --- | --- |
-| 首次部署，想自己定 | 部署后打开网页，页面上会提示「创建访问密码」 |
+| 首次部署，想自己定 | 运行 `./netdisk.sh show-setup-token` 获取令牌，再在网页首次设置表单中输入令牌和新密码 |
 | 部署时就想定好 | `NETDISK_PASSWORD='xxx' ./deploy.sh`（用后清理 shell 历史；`--password` 的明文还会进入进程列表） |
 | 事后要改 | 登录后点工具栏「修改密码」（需填当前密码） |
-| 忘了密码 | `./netdisk.sh reset-password && ./netdisk.sh restart`，再打开网页重新创建 |
+| 忘了密码 | `./netdisk.sh reset-password && ./netdisk.sh restart`，然后用 `./netdisk.sh show-setup-token` 查看新令牌 |
 
 规则：
 
@@ -194,7 +196,7 @@ cloudflared tunnel --url http://localhost:3000
 - 修改密码会作废所有其它设备上的会话；
 - 输错会递增等待（0.5→1→2→4→8 秒封顶），同 IP 累计 20 次失败封禁 15 分钟。
 
-**分享给别人的正确姿势**：先自己访问创建密码（或用 `--password` 预设），再把「网址 + 密码」一起发出。否则第一个访问网址的人会抢先创建密码。
+**分享给别人的正确姿势**：用服务器生成的一次性令牌完成密码设置（或用 `NETDISK_PASSWORD` 预设），再把「网址 + 密码」一起发出。不要分享初始化令牌。
 
 ---
 
@@ -205,7 +207,7 @@ cloudflared tunnel --url http://localhost:3000
 tar -czf netdisk-backup-$(date +%F).tar.gz storage/ config.json
 ```
 
-迁移到新机器：拷贝整个目录 → `./deploy.sh --password 'xxx'` → 恢复 `storage/` 与 `config.json`。
+迁移到新机器：拷贝整个目录 → `./deploy.sh --password 'xxx'` → 恢复 `storage/` 与 `config.json`。若不预设密码，则保留受保护的 `.initial-setup-token` 或使用新机器首次启动生成的新令牌。
 
 只备份数据的话，`storage/` 目录本身就是全部内容；`config.json` 只存会话密钥和密码散列，不含文件。
 
@@ -234,4 +236,4 @@ tar -czf netdisk-backup-$(date +%F).tar.gz storage/ config.json
 5. **限制单文件大小**：`server.js` 里 `multer` 的 `fileSize` 改成实际需要的值。
 6. **不要用 root 运行**：`User=netdisk` 或普通用户。
 7. **关闭目录列举以外的写权限**：`chmod 700 storage/`。
-8. **反代后设置 `TRUST_PROXY=1`**：否则服务端不采信 `X-Forwarded-Proto`，HTTPS 下 Cookie 不会带 `Secure`；但直连公网时**不要**开启，否则客户端可伪造 `X-Forwarded-For` 绕过登录限流。
+8. **反代后设置 `TRUST_PROXY=1`**：否则服务端不采信 `X-Forwarded-Proto`，HTTPS 下 Cookie 不会带 `Secure`；Instabox 自动设置一跳。直连公网时**不要**开启，否则客户端可伪造 `X-Forwarded-For` 绕过登录限流。

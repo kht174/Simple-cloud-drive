@@ -9,10 +9,14 @@ services:
     environment:
       PORT: "3000"
       NETDISK_DIR: "/app/storage"
+      NETDISK_HOST: "0.0.0.0"
       # 配置放进具名卷，避免宿主机没有 config.json 时被 Docker 创建成目录导致启动失败
       NETDISK_CONFIG: "/app/config/config.json"
       # 在反向代理之后部署时设为 1（信任一跳代理），否则不要开启
-      # TRUST_PROXY: "1"
+      TRUST_PROXY: "${TRUST_PROXY:-}"
+      # 把 Instabox 标记传入容器；服务仅在识别到 Instabox 时自动信任一跳代理
+      INSTABOX_TERM_SESSION: "${INSTABOX_TERM_SESSION:-}"
+      INSTABOX_TERM_DIR: "${INSTABOX_TERM_DIR:-}"
       # 可选：预设访问密码（每次启动都会重设并作废旧会话，建议只在首次部署时设置）
       # NETDISK_PASSWORD: "your-password-here"
     volumes:
