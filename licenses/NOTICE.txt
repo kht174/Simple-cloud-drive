@@ -1,0 +1,29 @@
+netdisk-share - third-party components
+======================================
+
+The following components are vendored into this repository so the application
+works without internet access after deployment. Their full license texts are
+included in this directory.
+
+1) highlight.js 11.9.0
+   Files   : public/vendor/highlight.min.js
+             public/vendor/github.min.css (github theme)
+   License : BSD-3-Clause
+   Text    : licenses/LICENSE-highlightjs.txt
+   Source  : https://github.com/highlightjs/highlight.js
+
+2) marked 4.3.0
+   Files   : public/vendor/marked.min.js
+   License : MIT
+   Text    : licenses/LICENSE-marked.txt
+   Source  : https://github.com/markedjs/marked
+
+3) DOMPurify 3.2.6
+   Files   : public/vendor/purify.min.js
+   License : Apache-2.0 OR MPL-2.0 (dual licensed)
+   Text    : licenses/LICENSE-dompurify.txt
+   Source  : https://github.com/cure53/DOMPurify
+
+npm dependencies (express 4.x and multer 2.x, both MIT) are installed at
+deploy time and are governed by the license files shipped inside their own
+npm packages. See package-lock.json for the exact resolved versions.

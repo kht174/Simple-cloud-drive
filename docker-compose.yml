@@ -1,0 +1,23 @@
+services:
+  netdisk:
+    build: .
+    image: netdisk:latest
+    container_name: netdisk
+    restart: unless-stopped
+    ports:
+      - "3000:3000"
+    environment:
+      PORT: "3000"
+      NETDISK_DIR: "/app/storage"
+      # 配置放进具名卷，避免宿主机没有 config.json 时被 Docker 创建成目录导致启动失败
+      NETDISK_CONFIG: "/app/config/config.json"
+      # 在反向代理之后部署时设为 1（信任一跳代理），否则不要开启
+      # TRUST_PROXY: "1"
+      # 可选：预设访问密码（每次启动都会重设并作废旧会话，建议只在首次部署时设置）
+      # NETDISK_PASSWORD: "your-password-here"
+    volumes:
+      - ./storage:/app/storage
+      - netdisk-config:/app/config
+
+volumes:
+  netdisk-config:

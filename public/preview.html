@@ -1,0 +1,298 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>在线预览 · 我的云盘</title>
+<link rel="icon" href="data:," />
+<link rel="stylesheet" href="/vendor/github.min.css" />
+<style>
+  :root {
+    --bg: #f5f6f8; --panel: #fff; --text: #1f2430; --muted: #7a8194;
+    --line: #e6e9ef; --accent: #3b6cf6; --accent-2: #6f8dff; --danger: #e5484d;
+    --radius: 14px; --shadow: 0 8px 30px rgba(28,39,76,.08);
+  }
+  * { box-sizing: border-box; }
+  html, body { height: 100%; margin: 0; }
+  body {
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", "PingFang SC", "Hiragino Sans GB", "Microsoft YaHei", sans-serif;
+    background: var(--bg); color: var(--text); -webkit-font-smoothing: antialiased;
+    display: flex; flex-direction: column;
+  }
+  header {
+    display: flex; align-items: center; gap: 14px; padding: 12px 20px;
+    background: var(--panel); border-bottom: 1px solid var(--line); flex: none;
+  }
+  .back {
+    display: inline-flex; align-items: center; gap: 6px; text-decoration: none; flex: none;
+    color: var(--muted); font-size: 13.5px; padding: 7px 11px; border-radius: 9px; border: 1px solid var(--line);
+    white-space: nowrap;
+  }
+  .back:hover { color: var(--accent); border-color: #c9d3ea; background: #f7f9ff; }
+  .title { min-width: 0; flex: 1; }
+  .title b { display: block; font-size: 14.5px; font-weight: 600; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .title span { display: block; font-size: 12px; color: var(--muted); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .acts { display: flex; gap: 8px; flex: none; }
+  .btn {
+    appearance: none; border: 1px solid var(--line); background: #fff; color: var(--text);
+    padding: 8px 13px; border-radius: 9px; font-size: 13px; cursor: pointer;
+    display: inline-flex; align-items: center; gap: 6px; text-decoration: none; white-space: nowrap;
+  }
+  .btn:hover { border-color: #c9d3ea; background: #f7f9ff; }
+  .btn.primary { background: linear-gradient(135deg, var(--accent), var(--accent-2)); border: none; color: #fff; }
+  .btn svg { width: 15px; height: 15px; }
+  main { flex: 1; overflow: auto; padding: 20px; }
+  .card {
+    background: var(--panel); border: 1px solid var(--line); border-radius: var(--radius);
+    box-shadow: var(--shadow); overflow: hidden; min-height: 100%;
+  }
+  pre.code {
+    margin: 0; padding: 18px 20px; overflow: auto; font-size: 13px; line-height: 1.65;
+    font-family: ui-monospace, SFMono-Regular, "JetBrains Mono", Menlo, Consolas, "Courier New", monospace;
+    tab-size: 4; white-space: pre; -moz-tab-size: 4;
+  }
+  pre.code.wrap { white-space: pre-wrap; word-break: break-word; }
+  .md { padding: 26px 30px; font-size: 14.5px; line-height: 1.8; }
+  .md h1, .md h2, .md h3 { line-height: 1.35; margin: 1.4em 0 .6em; }
+  .md h1 { font-size: 24px; border-bottom: 1px solid var(--line); padding-bottom: .4em; }
+  .md h2 { font-size: 19px; border-bottom: 1px solid var(--line); padding-bottom: .3em; }
+  .md h3 { font-size: 16px; }
+  .md > *:first-child { margin-top: 0; }
+  .md code { background: #f2f4f8; padding: .15em .4em; border-radius: 5px; font-size: 13px; font-family: ui-monospace, Menlo, Consolas, monospace; }
+  .md pre { background: #f6f8fa; padding: 14px 16px; border-radius: 10px; overflow: auto; border: 1px solid var(--line); }
+  .md pre code { background: none; padding: 0; font-size: 12.8px; line-height: 1.6; }
+  .md blockquote { margin: 1em 0; padding: .4em 1em; border-left: 4px solid var(--accent); background: #f7f9ff; color: #4a5164; }
+  .md table { border-collapse: collapse; margin: 1em 0; font-size: 13.5px; display: block; overflow: auto; }
+  .md th, .md td { border: 1px solid var(--line); padding: 7px 11px; text-align: left; }
+  .md th { background: #f6f8fa; }
+  .md img { max-width: 100%; }
+  .md hr { border: none; border-top: 1px solid var(--line); margin: 2em 0; }
+  .md a { color: var(--accent); }
+  .imgwrap { display: flex; align-items: center; justify-content: center; min-height: 60vh; padding: 24px; background: #eef1f6; }
+  .imgwrap img { max-width: 100%; max-height: 78vh; box-shadow: 0 10px 40px rgba(20,30,60,.18); border-radius: 8px; background: #fff; }
+  .pdfwrap { height: calc(100vh - 62px); background: #525659; }
+  .pdfwrap iframe { width: 100%; height: 100%; border: 0; display: block; }
+  .msg { padding: 60px 24px; text-align: center; color: var(--muted); font-size: 14px; }
+  .msg .big { font-size: 15px; color: var(--text); margin-bottom: 8px; }
+  .lock { max-width: 380px; margin: 12vh auto; background: var(--panel); border: 1px solid var(--line); border-radius: 16px; box-shadow: var(--shadow); padding: 28px 26px; text-align: center; }
+  .lock h3 { margin: 0 0 6px; font-size: 17px; }
+  .lock p { margin: 0 0 18px; color: var(--muted); font-size: 13px; }
+  .lock input { width: 100%; padding: 11px 13px; border: 1px solid var(--line); border-radius: 10px; font-size: 15px; outline: none; text-align: center; }
+  .lock input:focus { border-color: var(--accent); box-shadow: 0 0 0 3px rgba(59,108,246,.12); }
+  .lock .btn { width: 100%; justify-content: center; margin-top: 12px; }
+  .lock .err { color: var(--danger); font-size: 12.5px; margin-top: 9px; min-height: 17px; }
+  .status { padding: 12px 16px; font-size: 13px; color: var(--muted); }
+</style>
+</head>
+<body>
+<header>
+  <a class="back" href="/">
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M15 18l-6-6 6-6"/></svg>
+    返回网盘
+  </a>
+  <div class="title"><b id="name">—</b><span id="path">—</span></div>
+  <div class="acts">
+    <button class="btn" id="copyBtn" style="display:none">复制</button>
+    <button class="btn" id="wrapBtn" style="display:none">自动换行</button>
+    <a class="btn primary" id="dlBtn" download>
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 4v12m0 0 4-4m-4 4-4-4"/><path d="M4 20h16"/></svg>
+      下载
+    </a>
+  </div>
+</header>
+<main id="main"><div class="status">加载中…</div></main>
+
+<script src="/vendor/highlight.min.js"></script>
+<script src="/vendor/marked.min.js"></script>
+<script src="/vendor/purify.min.js"></script>
+<script>
+const $ = (s) => document.querySelector(s);
+const params = new URLSearchParams(location.search);
+const relPath = params.get('path') || '';
+const fileName = relPath.split('/').pop() || relPath;
+
+$('#name').textContent = fileName;
+$('#path').textContent = decodeURIComponent(relPath);
+$('#dlBtn').href = '/api/download?path=' + encodeURIComponent(relPath);
+
+const EXT_LANG = {
+  js: 'javascript', mjs: 'javascript', cjs: 'javascript', jsx: 'javascript',
+  ts: 'typescript', tsx: 'typescript', json: 'json', jsonc: 'json', json5: 'json',
+  xml: 'xml', html: 'xml', htm: 'xml', xhtml: 'xml', svg: 'xml', plist: 'xml',
+  md: 'markdown', markdown: 'markdown', mdx: 'markdown',
+  css: 'css', scss: 'scss', less: 'less', vue: 'xml', svelte: 'xml',
+  yml: 'yaml', yaml: 'yaml', toml: 'ini', ini: 'ini', cfg: 'ini', conf: 'ini',
+  sh: 'bash', bash: 'bash', zsh: 'bash', fish: 'bash', ps1: 'powershell', bat: 'batch', cmd: 'batch',
+  py: 'python', java: 'java', kt: 'kotlin', kts: 'kotlin', scala: 'scala', groovy: 'groovy',
+  c: 'c', h: 'cpp', cc: 'cpp', cpp: 'cpp', hpp: 'cpp', cs: 'csharp', go: 'go', rs: 'rust',
+  rb: 'ruby', php: 'php', pl: 'perl', pm: 'perl', lua: 'lua', swift: 'swift', dart: 'dart',
+  sql: 'sql', diff: 'diff', patch: 'diff', dockerfile: 'dockerfile', makefile: 'makefile',
+  gradle: 'groovy', properties: 'properties', tex: 'latex',
+};
+
+function extOf(name) {
+  const lower = name.toLowerCase();
+  const dot = lower.lastIndexOf('.');
+  if (dot < 0) return lower;
+  return lower.slice(dot + 1);
+}
+
+function setMain(html) { $('#main').innerHTML = html; }
+
+function renderUnsupported(text) {
+  setMain(`<div class="card"><div class="msg">
+    <div class="big">该文件类型不支持在线预览</div>
+    <div>${escapeHtml(text || '请下载后使用本地软件打开。')}</div>
+    <p style="margin-top:16px"><a class="btn primary" href="/api/download?path=${encodeURIComponent(relPath)}" download>下载文件</a></p>
+  </div></div>`);
+}
+
+function escapeHtml(s) {
+  return String(s).replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+}
+
+let lockMode = 'login';
+
+function showLock(msg) {
+  const setup = lockMode === 'setup';
+  setMain(`<div class="lock">
+    <h3>${setup ? '创建访问密码' : '需要访问密码'}</h3>
+    <p>${setup ? '首次访问，请为这个网盘设置一个访问密码' : '该网盘已启用访问密码，请输入密码以查看此文件'}</p>
+    <input id="pvPwd" type="password" placeholder="${setup ? '设置新密码（至少 6 位）' : '请输入访问密码'}" autocomplete="${setup ? 'new-password' : 'current-password'}" />
+    ${setup ? '<input id="pvPwd2" type="password" placeholder="再次输入新密码" autocomplete="new-password" style="margin-top:10px" />' : ''}
+    <button class="btn primary" id="pvGo">${setup ? '创建并查看' : '查看'}</button>
+    <div class="err" id="pvErr">${escapeHtml(msg || '')}</div>
+  </div>`);
+  const pwd = $('#pvPwd');
+  pwd.focus();
+  const go = async () => {
+    const err = $('#pvErr');
+    if (setup) {
+      const v = pwd.value;
+      if (v.length < 6) { err.textContent = '密码至少 6 位'; return; }
+      if (v !== $('#pvPwd2').value) { err.textContent = '两次输入的密码不一致'; return; }
+      try {
+        const r = await fetch('/api/password', {
+          method: 'POST', headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ newPassword: v }),
+        });
+        const data = await r.json().catch(() => ({}));
+        if (!r.ok || data.ok === false) { err.textContent = data.error || '创建失败'; return; }
+        load();
+      } catch (e) { err.textContent = '网络错误'; }
+      return;
+    }
+    try {
+      const r = await fetch('/api/login', {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ password: pwd.value }),
+      });
+      const data = await r.json().catch(() => ({}));
+      if (data.needSetup) { lockMode = 'setup'; showLock(''); return; }
+      if (!r.ok || data.ok === false) { err.textContent = data.error || '密码错误'; return; }
+      load();
+    } catch (e) { err.textContent = '网络错误'; }
+  };
+  $('#pvGo').onclick = go;
+  pwd.onkeydown = (e) => { if (e.key === 'Enter') go(); };
+  if (setup) $('#pvPwd2').onkeydown = (e) => { if (e.key === 'Enter') go(); };
+}
+
+async function load() {
+  setMain('<div class="status">加载中…</div>');
+  let res;
+  try {
+    res = await fetch('/api/preview?path=' + encodeURIComponent(relPath));
+  } catch (e) {
+    setMain('<div class="card"><div class="msg"><div class="big">无法连接服务器</div></div></div>');
+    return;
+  }
+  if (res.status === 401) {
+    try {
+      const s = await fetch('/api/session').then((r) => r.json());
+      lockMode = s.passwordSet ? 'login' : 'setup';
+    } catch (e) { lockMode = 'login'; }
+    showLock();
+    return;
+  }
+  if (!res.ok) {
+    const t = await res.text().catch(() => '');
+    renderUnsupported(t || `请求失败 (${res.status})`);
+    return;
+  }
+
+  const kind = res.headers.get('X-Preview-Kind') || 'text';
+  const ext = (res.headers.get('X-Preview-Ext') || extOf(fileName)).replace(/^\./, '').toLowerCase();
+
+  if (kind === 'image') {
+    const url = '/api/preview?path=' + encodeURIComponent(relPath);
+    setMain(`<div class="card"><div class="imgwrap"><img src="${url}" alt="${escapeHtml(fileName)}" /></div></div>`);
+    return;
+  }
+  if (kind === 'pdf') {
+    const url = '/api/preview?path=' + encodeURIComponent(relPath);
+    setMain(`<div class="card pdfwrap"><iframe src="${url}" title="${escapeHtml(fileName)}"></iframe></div>`);
+    return;
+  }
+  if (kind !== 'text') { renderUnsupported(); return; }
+
+  const text = await res.text();
+  const lang = EXT_LANG[ext] || 'plaintext';
+
+  if (lang === 'markdown') {
+    // marked 会原样透传文件里的原始 HTML（含 onerror / javascript: 链接），
+    // 直接 innerHTML 就是存储型 XSS，必须先净化。
+    const rawHtml = marked.parse(text, { mangle: false, headerIds: false });
+    const html = DOMPurify.sanitize(rawHtml, {
+      USE_PROFILES: { html: true },
+      FORBID_TAGS: ['style', 'form', 'input', 'iframe', 'object', 'embed'],
+      FORBID_ATTR: ['style'],
+    });
+    setMain(`<div class="card"><div class="md" id="mdView">${html}</div></div>`);
+    $('#mdView').querySelectorAll('a[href]').forEach((a) => {
+      if (!a.getAttribute('href').startsWith('#')) {
+        a.setAttribute('target', '_blank');
+        a.setAttribute('rel', 'noopener noreferrer');
+      }
+    });
+    $('#mdView').querySelectorAll('pre code').forEach((b) => {
+      try { hljs.highlightElement(b); } catch (e) { /* ignore */ }
+    });
+    $('#copyBtn').style.display = '';
+    $('#copyBtn').onclick = () => copy(text);
+    $('#wrapBtn').style.display = 'none';
+    return;
+  }
+
+  // highlight.js 只内置了 36 种语言；未注册的语言会抛异常导致整页白屏，
+  // 这里统一回退为转义后的纯文本。
+  let html;
+  try {
+    html = hljs.getLanguage(lang)
+      ? hljs.highlight(text, { language: lang }).value
+      : escapeHtml(text);
+  } catch (e) {
+    html = escapeHtml(text);
+  }
+  setMain(`<div class="card"><pre class="code" id="codeView">${html}</pre></div>`);
+  $('#copyBtn').style.display = '';
+  $('#copyBtn').onclick = () => copy(text);
+  $('#wrapBtn').style.display = '';
+  $('#wrapBtn').onclick = (e) => {
+    const pre = $('#codeView');
+    pre.classList.toggle('wrap');
+    e.target.textContent = pre.classList.contains('wrap') ? '取消换行' : '自动换行';
+  };
+}
+
+function copy(text) {
+  navigator.clipboard.writeText(text).then(
+    () => { const b = $('#copyBtn'); b.textContent = '已复制'; setTimeout(() => (b.textContent = '复制'), 1500); },
+    () => { const b = $('#copyBtn'); b.textContent = '复制失败'; setTimeout(() => (b.textContent = '复制'), 1500); }
+  );
+}
+
+load();
+</script>
+</body>
+</html>

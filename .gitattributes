@@ -1,0 +1,7 @@
+# 统一换行符：.sh 必须是 LF，否则 Linux / macOS 上会报 bad interpreter
+* text=auto eol=lf
+*.bat text eol=crlf
+
+# 第三方压缩库按字节保存，不做换行转换
+public/vendor/*.min.js -text
+public/vendor/*.min.css -text

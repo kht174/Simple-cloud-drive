@@ -1,0 +1,62 @@
+我的云盘 · Netdisk Share
+版本        : 1.0.0
+构建日期    : 2026-11-14
+内容        : web 网盘整站源码（Express + 原生前端，无构建步骤）
+目标环境    : Node.js >= 18
+开源许可    : MIT（见 LICENSE；第三方组件见 licenses/NOTICE.txt）
+
+────────────────────────────────────────────────────────────
+脱敏声明
+────────────────────────────────────────────────────────────
+本包已做如下处理，**不含任何真实凭据或他人数据**：
+
+  [已清除] 访问密码      —— 未预设，首次打开网页时由使用者自行创建
+  [已清除] 会话密钥      —— 未包含，首次启动时随机生成并写入本机 config.json
+  [已清除] 密码散列      —— 未包含
+  [已清除] 用户文件      —— 不含 storage/ 目录，仓库内没有任何使用者数据
+  [已清除] 运行日志      —— 不含 server.log / server.pid
+  [已清除] 依赖目录      —— 不含 node_modules/，deploy.sh 会自动安装
+  [已清除] 主机路径      —— 不含任何本机绝对路径、主机名或用户名
+
+  保留内容  : server.js / public/ / docs/ / 部署脚本 / 依赖声明 / 第三方库
+
+────────────────────────────────────────────────────────────
+密码说明（重要）
+────────────────────────────────────────────────────────────
+1. 本包内没有预设密码。首次打开网页会显示「创建访问密码」，
+   设置完成即可使用（密码以 scrypt 散列存储，配置文件里没有明文）。
+2. 想替对方预设密码：  NETDISK_PASSWORD='xxx' ./deploy.sh
+   或部署后点网页上的「修改密码」。
+3. 第一个访问网址的人会成为密码持有者 —— 分享前请先自行创建密码。
+
+────────────────────────────────────────────────────────────
+仓库文件
+────────────────────────────────────────────────────────────
+README.md            主文档：密码说明、部署方式、功能、配置、安全设计
+docs/DEPLOY.md       部署详解：反代 / HTTPS / systemd / PM2 / Docker / 备份
+docs/API.md          HTTP 接口说明
+deploy.sh            一键部署脚本（--port / --password / --dir / --no-start）
+netdisk.sh           服务管理：start | stop | restart | status | reset-password
+uninstall.sh         卸载脚本（--purge 连数据一起删）
+server.js            服务端
+public/index.html    网盘主页面
+public/preview.html  在线预览页
+public/vendor/       本地化第三方库：highlight.js 11.9.0 / marked 4.3.0 / DOMPurify 3.2.6 / github 主题
+config.example.json  配置字段说明（无真实值）
+LICENSE              MIT 许可证
+licenses/            第三方组件许可证全文与 NOTICE.txt
+start.bat            Windows 一键启动
+.dockerignore        Docker 构建上下文排除规则
+Dockerfile           容器镜像
+docker-compose.yml   容器编排
+package.json         依赖声明
+package-lock.json    锁定版本
+.gitignore
+
+────────────────────────────────────────────────────────────
+快速开始
+────────────────────────────────────────────────────────────
+  git clone https://github.com/kht174/Simple-cloud-drive.git
+  cd Simple-cloud-drive
+  ./deploy.sh
+  # 浏览器打开 http://<本机IP>:3000 ，按提示创建访问密码

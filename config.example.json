@@ -1,0 +1,8 @@
+{
+  "_comment": "配置示例。首次启动时自动生成 config.json（随机 sessionSecret，权限 600）；可用 NETDISK_CONFIG 指定其它路径（Docker 部署使用）。此文件仅为字段说明，不含任何真实密钥。",
+
+  "sessionSecret": "启动时自动生成的 64 位十六进制随机串，用于签名会话令牌，请勿泄露",
+  "passwordVersion": 1,
+  "passwordSalt": "密码散列的盐值（十六进制），设置密码时自动生成",
+  "passwordHash": "scrypt 派生的密码散列（128 位十六进制），不是明文；未设置密码时该字段不存在"
+}

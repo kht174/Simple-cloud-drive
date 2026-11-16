@@ -1,0 +1,10 @@
+node_modules
+storage
+config.json
+config.json.bad
+server.log
+server.pid
+.git
+.gitignore
+*.tar.gz
+*.zip

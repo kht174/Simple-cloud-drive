@@ -1,0 +1,689 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>我的云盘</title>
+<link rel="icon" href="data:," />
+<style>
+  :root {
+    --bg: #f5f6f8;
+    --panel: #ffffff;
+    --text: #1f2430;
+    --muted: #7a8194;
+    --line: #e6e9ef;
+    --accent: #3b6cf6;
+    --accent-2: #6f8dff;
+    --danger: #e5484d;
+    --radius: 14px;
+    --shadow: 0 8px 30px rgba(28, 39, 76, 0.08);
+  }
+  * { box-sizing: border-box; }
+  html, body { height: 100%; }
+  body {
+    margin: 0;
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", "PingFang SC", "Hiragino Sans GB", "Microsoft YaHei", sans-serif;
+    background: linear-gradient(180deg, #eef2fb 0%, var(--bg) 260px);
+    color: var(--text);
+    -webkit-font-smoothing: antialiased;
+  }
+  .wrap { max-width: 1040px; margin: 0 auto; padding: 28px 20px 90px; }
+  header { display: flex; align-items: center; justify-content: space-between; gap: 16px; margin-bottom: 22px; }
+  .brand { display: flex; align-items: center; gap: 12px; }
+  .logo {
+    width: 44px; height: 44px; border-radius: 12px;
+    background: linear-gradient(135deg, var(--accent), var(--accent-2));
+    display: grid; place-items: center; color: #fff; box-shadow: 0 6px 18px rgba(59,108,246,.35);
+  }
+  .brand h1 { font-size: 20px; margin: 0; letter-spacing: .5px; }
+  .brand p { margin: 2px 0 0; color: var(--muted); font-size: 12.5px; }
+  .stats { text-align: right; font-size: 12.5px; color: var(--muted); line-height: 1.7; }
+  .stats b { color: var(--text); font-size: 14px; }
+
+  .panel { background: var(--panel); border: 1px solid var(--line); border-radius: var(--radius); box-shadow: var(--shadow); }
+  .toolbar { display: flex; flex-wrap: wrap; gap: 10px; align-items: center; padding: 14px; border-bottom: 1px solid var(--line); }
+  .btn {
+    appearance: none; border: 1px solid var(--line); background: #fff; color: var(--text);
+    padding: 9px 14px; border-radius: 10px; font-size: 13.5px; cursor: pointer;
+    display: inline-flex; align-items: center; gap: 7px; transition: .15s ease; white-space: nowrap;
+  }
+  .btn:hover { border-color: #c9d3ea; background: #f7f9ff; }
+  .btn.primary { background: linear-gradient(135deg, var(--accent), var(--accent-2)); border: none; color: #fff; box-shadow: 0 6px 16px rgba(59,108,246,.3); }
+  .btn.primary:hover { filter: brightness(1.05); }
+  .btn svg { width: 16px; height: 16px; }
+  .search { margin-left: auto; position: relative; }
+  .search input {
+    width: 220px; padding: 9px 12px 9px 34px; border-radius: 10px; border: 1px solid var(--line);
+    background: #f8fafc; font-size: 13.5px; outline: none; transition: .15s;
+  }
+  .search input:focus { background: #fff; border-color: var(--accent); box-shadow: 0 0 0 3px rgba(59,108,246,.12); }
+  .search svg { position: absolute; left: 11px; top: 50%; transform: translateY(-50%); width: 15px; height: 15px; color: var(--muted); }
+
+  .crumbs { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; padding: 13px 16px; font-size: 13.5px; border-bottom: 1px solid var(--line); }
+  .crumbs a { color: var(--accent); text-decoration: none; cursor: pointer; padding: 3px 6px; border-radius: 7px; }
+  .crumbs a:hover { background: #eef2ff; }
+  .crumbs .sep { color: #b7bed0; }
+  .crumbs .cur { color: var(--muted); padding: 3px 6px; }
+
+  .dropzone { margin: 0; padding: 26px 16px; text-align: center; color: var(--muted); border-bottom: 1px solid var(--line); transition: .2s; cursor: pointer; }
+  .dropzone:hover, .dropzone.drag { background: #f2f6ff; }
+  .dropzone.drag { outline: 2px dashed var(--accent); outline-offset: -10px; }
+  .dropzone .dz-icon { width: 40px; height: 40px; margin: 0 auto 8px; color: #9db0e8; }
+  .dropzone strong { color: var(--text); font-weight: 600; }
+  .dropzone .hint { font-size: 12.5px; margin-top: 4px; }
+
+  .list-head, .row { display: grid; grid-template-columns: 1fr 110px 150px 130px; gap: 10px; align-items: center; padding: 0 16px; }
+  .list-head { height: 38px; font-size: 12px; color: var(--muted); border-bottom: 1px solid var(--line); letter-spacing: .3px; }
+  .row { min-height: 54px; border-bottom: 1px solid #f0f2f7; font-size: 13.5px; transition: background .12s; }
+  .row:last-child { border-bottom: none; }
+  .row:hover { background: #f8faff; }
+  .name { display: flex; align-items: center; gap: 10px; min-width: 0; }
+  .name .txt { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .name a { color: inherit; text-decoration: none; }
+  .name a:hover { color: var(--accent); }
+  .ico { width: 20px; height: 20px; flex: none; }
+  .ico.dir { color: #f5a623; }
+  .ico.file { color: #8b93a7; }
+  .size, .time { color: var(--muted); font-size: 12.5px; }
+  .acts { display: flex; gap: 4px; justify-content: flex-end; opacity: .35; transition: .15s; }
+  .row:hover .acts { opacity: 1; }
+  .icon-btn { border: none; background: transparent; color: var(--muted); cursor: pointer; padding: 6px; border-radius: 8px; display: grid; place-items: center; }
+  .icon-btn:hover { background: #eef2ff; color: var(--accent); }
+  .icon-btn.danger:hover { background: #fdeeee; color: var(--danger); }
+  .icon-btn svg { width: 16px; height: 16px; }
+  .empty { padding: 70px 20px; text-align: center; color: var(--muted); font-size: 14px; }
+  .empty svg { width: 54px; height: 54px; color: #c5cde0; margin-bottom: 10px; }
+
+  .queue { position: fixed; right: 22px; bottom: 22px; width: min(360px, calc(100vw - 44px)); background: #fff; border: 1px solid var(--line); border-radius: 14px; box-shadow: 0 18px 50px rgba(20,30,60,.18); overflow: hidden; display: none; }
+  .queue.show { display: block; }
+  .queue-head { display: flex; align-items: center; justify-content: space-between; padding: 12px 14px; font-size: 13px; border-bottom: 1px solid var(--line); }
+  .queue-body { max-height: 260px; overflow: auto; padding: 8px 14px 12px; }
+  .qitem { padding: 7px 0; font-size: 12.5px; }
+  .qitem .top { display: flex; justify-content: space-between; gap: 10px; color: var(--muted); }
+  .qitem .fname { color: var(--text); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .bar { height: 5px; background: #edf0f6; border-radius: 99px; margin-top: 6px; overflow: hidden; }
+  .bar > i { display: block; height: 100%; width: 0; background: linear-gradient(90deg, var(--accent), var(--accent-2)); transition: width .15s; border-radius: 99px; }
+  .qitem.done .bar > i { background: #35c46a; }
+  .qitem.fail .bar > i { background: var(--danger); }
+
+  .modal-mask { position: fixed; inset: 0; background: rgba(20,28,50,.35); display: none; align-items: center; justify-content: center; padding: 20px; z-index: 20; }
+  .modal-mask.show { display: flex; }
+  .modal { width: min(420px, 100%); background: #fff; border-radius: 16px; box-shadow: 0 24px 60px rgba(20,30,60,.25); padding: 20px; }
+  .modal h3 { margin: 0 0 14px; font-size: 16px; }
+  .modal input { width: 100%; padding: 11px 12px; border: 1px solid var(--line); border-radius: 10px; font-size: 14px; outline: none; }
+  .modal input:focus { border-color: var(--accent); box-shadow: 0 0 0 3px rgba(59,108,246,.12); }
+  .modal .foot { display: flex; justify-content: flex-end; gap: 10px; margin-top: 18px; }
+
+  .toast { position: fixed; left: 50%; top: 20px; transform: translate(-50%, -12px); background: #1f2430; color: #fff; padding: 10px 16px; border-radius: 10px; font-size: 13px; opacity: 0; pointer-events: none; transition: .2s; z-index: 30; max-width: 90vw; }
+  .toast.show { opacity: 1; transform: translate(-50%, 0); }
+  .toast.err { background: var(--danger); }
+
+  /* 访问密码遮罩 */
+  .lock-mask {
+    position: fixed; inset: 0; z-index: 40; display: none;
+    align-items: center; justify-content: center; padding: 20px;
+    background: linear-gradient(180deg, #eef2fb 0%, #f5f6f8 100%);
+  }
+  .lock-mask.show { display: flex; }
+  .lock-card {
+    width: min(400px, 100%); background: #fff; border: 1px solid var(--line);
+    border-radius: 18px; box-shadow: var(--shadow); padding: 30px 28px 26px; text-align: center;
+  }
+  .lock-card .logo { margin: 0 auto 14px; }
+  .lock-card h2 { margin: 0 0 6px; font-size: 18px; }
+  .lock-card p { margin: 0 0 20px; color: var(--muted); font-size: 13px; }
+  .lock-card .field { position: relative; }
+  .lock-card input {
+    width: 100%; padding: 12px 42px 12px 14px; border: 1px solid var(--line);
+    border-radius: 11px; font-size: 15px; outline: none; transition: .15s; text-align: center;
+    letter-spacing: 1px;
+  }
+  .lock-card input:focus { border-color: var(--accent); box-shadow: 0 0 0 3px rgba(59,108,246,.12); }
+  .lock-card .toggle {
+    position: absolute; right: 6px; top: 50%; transform: translateY(-50%);
+    border: none; background: transparent; color: var(--muted); cursor: pointer;
+    padding: 8px; border-radius: 8px; display: grid; place-items: center;
+  }
+  .lock-card .toggle:hover { color: var(--accent); background: #eef2ff; }
+  .lock-card .btn { width: 100%; justify-content: center; margin-top: 14px; padding: 11px 14px; font-size: 14.5px; }
+  .lock-msg { min-height: 18px; margin-top: 10px; font-size: 12.5px; color: var(--danger); }
+  .lock-hint { margin-top: 4px; font-size: 12px; color: var(--muted); }
+
+  @media (max-width: 720px) {
+    .list-head, .row { grid-template-columns: 1fr 90px 40px; }
+    .time { display: none; }
+    .acts { opacity: 1; }
+    .search { width: 100%; margin-left: 0; }
+    .search input { width: 100%; }
+  }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <header>
+    <div class="brand">
+      <div class="logo">
+        <svg viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 16.5A3.5 3.5 0 0 1 5.7 9.7 5.5 5.5 0 0 1 16.6 8a4.5 4.5 0 0 1 .4 9H6a2 2 0 0 1-2-2z"/></svg>
+      </div>
+      <div>
+        <h1>我的云盘</h1>
+        <p>上传、管理、下载你的文件</p>
+      </div>
+    </div>
+    <div class="stats">
+      <div>已用空间 <b id="used">—</b></div>
+      <div>共 <b id="count">—</b> 个文件</div>
+    </div>
+  </header>
+
+  <div class="panel">
+    <div class="toolbar">
+      <button class="btn primary" id="uploadBtn">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 16V4m0 0 4 4m-4-4L8 8"/><path d="M4 16v2a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2v-2"/></svg>
+        上传文件
+      </button>
+      <button class="btn" id="mkdirBtn">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/><path d="M12 11v6m-3-3h6"/></svg>
+        新建文件夹
+      </button>
+      <button class="btn" id="refreshBtn">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 12a9 9 0 1 1-2.64-6.36"/><path d="M21 3v6h-6"/></svg>
+        刷新
+      </button>
+      <button class="btn" id="pwdBtn" title="修改访问密码">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 2l-2 2m-7.6 7.6a5.5 5.5 0 1 1-7.8 7.8 5.5 5.5 0 0 1 7.8-7.8zm0 0L15.5 7.5m0 0l3 3L22 7l-3-3m-3.5 3.5L19 4"/></svg>
+        修改密码
+      </button>
+      <button class="btn" id="logoutBtn" title="退出并清除访问状态">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="4" y="10" width="16" height="11" rx="2"/><path d="M8 10V7a4 4 0 0 1 8 0v3"/></svg>
+        退出
+      </button>
+      <div class="search">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="11" cy="11" r="7"/><path d="m20 20-3.5-3.5"/></svg>
+        <input id="searchInput" placeholder="搜索当前文件夹…" />
+      </div>
+    </div>
+
+    <div class="crumbs" id="crumbs"></div>
+
+    <div class="dropzone" id="dropzone">
+      <svg class="dz-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M4 16.5A3.5 3.5 0 0 1 5.7 9.7 5.5 5.5 0 0 1 16.6 8a4.5 4.5 0 0 1 .4 9H6a2 2 0 0 1-2-2z"/><path d="M12 17V9m0 0 3 3m-3-3-3 3"/></svg>
+      <div><strong>拖拽文件到这里上传</strong>，或点击选择文件</div>
+      <div class="hint">支持多选，单个文件最大 20 GB</div>
+    </div>
+
+    <div class="list-head">
+      <span>名称</span><span>大小</span><span>修改时间</span><span></span>
+    </div>
+    <div id="list"></div>
+  </div>
+</div>
+
+<input type="file" id="fileInput" multiple hidden />
+
+<div class="queue" id="queue">
+  <div class="queue-head">
+    <span id="queueTitle">上传中…</span>
+    <button class="icon-btn" id="queueClose" title="关闭">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M6 6l12 12M18 6 6 18"/></svg>
+    </button>
+  </div>
+  <div class="queue-body" id="queueBody"></div>
+</div>
+
+<div class="modal-mask" id="modalMask">
+  <div class="modal">
+    <h3 id="modalTitle">新建文件夹</h3>
+    <input id="modalInput" placeholder="文件夹名称" />
+    <div class="foot">
+      <button class="btn" id="modalCancel">取消</button>
+      <button class="btn primary" id="modalOk">确定</button>
+    </div>
+  </div>
+</div>
+
+<div class="toast" id="toast"></div>
+
+<div class="lock-mask" id="lockMask">
+  <div class="lock-card">
+    <div class="logo">
+      <svg viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 16.5A3.5 3.5 0 0 1 5.7 9.7 5.5 5.5 0 0 1 16.6 8a4.5 4.5 0 0 1 .4 9H6a4 4 0 0 1-2-2z"/></svg>
+    </div>
+    <h2 id="lockTitle">我的云盘</h2>
+    <p id="lockDesc">该网盘已启用访问密码，请输入密码以继续</p>
+    <div class="field">
+      <input id="lockInput" type="password" placeholder="请输入访问密码" autocomplete="current-password" />
+      <button class="toggle" id="lockToggle" title="显示密码">
+        <svg viewBox="0 0 24 24" width="17" height="17" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><path d="M2 12s3.6-7 10-7 10 7 10 7-3.6 7-10 7S2 12 2 12z"/><circle cx="12" cy="12" r="3"/></svg>
+      </button>
+    </div>
+    <div class="field" id="lockConfirmWrap" style="display:none; margin-top:10px">
+      <input id="lockConfirm" type="password" placeholder="再次输入新密码" autocomplete="new-password" />
+    </div>
+    <button class="btn primary" id="lockSubmit">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="4" y="10" width="16" height="11" rx="2"/><path d="M8 10V7a4 4 0 0 1 8 0v3"/></svg>
+      访问
+    </button>
+    <div class="lock-msg" id="lockMsg"></div>
+    <div class="lock-hint" id="lockHint">密码由网盘所有者提供</div>
+  </div>
+</div>
+
+<div class="modal-mask" id="pwdMask">
+  <div class="modal">
+    <h3 id="pwdTitle">修改访问密码</h3>
+    <input id="pwdCurrent" type="password" placeholder="当前密码" autocomplete="current-password" />
+    <input id="pwdNew" type="password" placeholder="新密码（至少 6 位）" autocomplete="new-password" style="margin-top:10px" />
+    <input id="pwdConfirm" type="password" placeholder="再次输入新密码" autocomplete="new-password" style="margin-top:10px" />
+    <div class="lock-msg" id="pwdErr" style="text-align:left"></div>
+    <div class="foot">
+      <button class="btn" id="pwdCancel">取消</button>
+      <button class="btn primary" id="pwdOk">确认修改</button>
+    </div>
+  </div>
+</div>
+
+<script>
+const $ = (sel) => document.querySelector(sel);
+const state = { path: '', entries: [], search: '', modalResolve: null, uploading: 0 };
+
+const icons = {
+  dir: '<svg class="ico dir" viewBox="0 0 24 24" fill="currentColor"><path d="M3 6a2 2 0 0 1 2-2h4.6l2 2H19a2 2 0 0 1 2 2v9a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/></svg>',
+  file: '<svg class="ico file" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linejoin="round"><path d="M6 3h8l4 4v14a0 0 0 0 1 0 0H6z"/><path d="M14 3v4h4"/></svg>',
+  download: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 4v12m0 0 4-4m-4 4-4-4"/><path d="M4 20h16"/></svg>',
+  eye: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><path d="M2 12s3.6-7 10-7 10 7 10 7-3.6 7-10 7S2 12 2 12z"/><circle cx="12" cy="12" r="3"/></svg>',
+  lock: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="4" y="10" width="16" height="11" rx="2"/><path d="M8 10V7a4 4 0 0 1 8 0v3"/></svg>',
+  trash: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 7h16M9 7V5h6v2m-8 0 1 13h8l1-13"/></svg>',
+  edit: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 20h4l10-10-4-4L4 16z"/><path d="m13 7 4 4"/></svg>',
+};
+
+function escapeHtml(s) {
+  return String(s).replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+}
+
+function fmtSize(n) {
+  if (!n) return '—';
+  const units = ['B', 'KB', 'MB', 'GB', 'TB'];
+  let i = 0, v = n;
+  while (v >= 1024 && i < units.length - 1) { v /= 1024; i++; }
+  return `${v >= 10 || i === 0 ? Math.round(v) : v.toFixed(1)} ${units[i]}`;
+}
+
+function fmtTime(ms) {
+  if (!ms) return '';
+  const d = new Date(ms);
+  const p = (x) => String(x).padStart(2, '0');
+  return `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())} ${p(d.getHours())}:${p(d.getMinutes())}`;
+}
+
+function joinPath(base, name) {
+  return base ? `${base}/${name}` : name;
+}
+
+function api(url, opts) {
+  return fetch(url, opts).then(async (r) => {
+    const data = await r.json().catch(() => ({}));
+    if (r.status === 401 && data.authRequired) {
+      showLock();
+      throw new Error('需要访问密码');
+    }
+    if (!r.ok || data.ok === false) throw new Error(data.error || `请求失败 (${r.status})`);
+    return data;
+  });
+}
+
+async function load(p) {
+  try {
+    const data = await api('/api/list?path=' + encodeURIComponent(p || ''));
+    state.path = data.path;
+    state.entries = data.entries;
+    renderCrumbs(data.breadcrumb);
+    renderList();
+    loadStats();
+  } catch (e) {
+    toast(e.message, true);
+  }
+}
+
+async function loadStats() {
+  try {
+    const s = await api('/api/stats');
+    $('#used').textContent = fmtSize(s.bytes);
+    $('#count').textContent = s.files;
+  } catch {}
+}
+
+function renderCrumbs(crumbs) {
+  $('#crumbs').innerHTML = crumbs.map((c, i) => {
+    const last = i === crumbs.length - 1;
+    const el = last
+      ? `<span class="cur">${escapeHtml(c.name)}</span>`
+      : `<a data-path="${escapeHtml(c.path)}">${escapeHtml(c.name)}</a>`;
+    return (i ? '<span class="sep">/</span>' : '') + el;
+  }).join('');
+  $('#crumbs').querySelectorAll('a[data-path]').forEach((a) => {
+    a.onclick = () => load(a.dataset.path);
+  });
+}
+
+function renderList() {
+  const q = state.search.trim().toLowerCase();
+  const list = state.entries.filter((e) => !q || e.name.toLowerCase().includes(q));
+  const box = $('#list');
+  if (!list.length) {
+    box.innerHTML = `<div class="empty">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round"><path d="M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/></svg>
+      <div>${q ? '没有匹配的文件' : '这个文件夹还是空的，上传一些文件吧'}</div>
+    </div>`;
+    return;
+  }
+  box.innerHTML = list.map((e) => {
+    const full = joinPath(state.path, e.name);
+    const nameCell = e.type === 'dir'
+      ? `<a data-dir="${escapeHtml(full)}">${escapeHtml(e.name)}</a>`
+      : `<a href="/api/download?path=${encodeURIComponent(full)}">${escapeHtml(e.name)}</a>`;
+    return `<div class="row" data-path="${escapeHtml(full)}" data-type="${e.type}">
+      <div class="name">${icons[e.type]}<span class="txt">${nameCell}</span></div>
+      <div class="size">${e.type === 'dir' ? '文件夹' : fmtSize(e.size)}</div>
+      <div class="time">${fmtTime(e.mtime)}</div>
+      <div class="acts">
+        ${e.type === 'file' && e.preview ? `<a class="icon-btn" title="在线预览" href="/preview.html?path=${encodeURIComponent(full)}" target="_blank" rel="noopener">${icons.eye}</a>` : ''}
+        ${e.type === 'file' ? `<a class="icon-btn" title="下载" href="/api/download?path=${encodeURIComponent(full)}">${icons.download}</a>` : ''}
+        <button class="icon-btn" title="重命名" data-act="rename">${icons.edit}</button>
+        <button class="icon-btn danger" title="删除" data-act="delete">${icons.trash}</button>
+      </div>
+    </div>`;
+  }).join('');
+
+  box.querySelectorAll('a[data-dir]').forEach((a) => {
+    a.onclick = (ev) => { ev.preventDefault(); load(a.dataset.dir); };
+  });
+  box.querySelectorAll('.row').forEach((row) => {
+    const full = row.dataset.path;
+    const name = full.split('/').pop();
+    row.querySelectorAll('[data-act]').forEach((btn) => {
+      btn.onclick = async (ev) => {
+        ev.preventDefault();
+        if (btn.dataset.act === 'delete') {
+          if (!confirm(`确定删除「${name}」？此操作不可恢复。`)) return;
+          try { await api('/api/delete', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ path: full }) }); toast('已删除'); load(state.path); }
+          catch (e) { toast(e.message, true); }
+        }
+        if (btn.dataset.act === 'rename') {
+          const newName = await askName('重命名', name);
+          if (!newName || newName === name) return;
+          try { await api('/api/rename', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ path: full, name: newName }) }); toast('已重命名'); load(state.path); }
+          catch (e) { toast(e.message, true); }
+        }
+      };
+    });
+  });
+}
+
+function uploadFiles(fileList) {
+  const files = Array.from(fileList || []);
+  if (!files.length) return;
+  $('#queue').classList.add('show');
+  $('#queueTitle').textContent = `上传中… (0/${files.length})`;
+  const body = $('#queueBody');
+  body.innerHTML = '';
+  const items = files.map((f) => {
+    const el = document.createElement('div');
+    el.className = 'qitem';
+    el.innerHTML = `<div class="top"><span class="fname">${escapeHtml(f.name)}</span><span class="pct">等待</span></div><div class="bar"><i></i></div>`;
+    body.appendChild(el);
+    return { f, el };
+  });
+  let done = 0;
+  const target = state.path;
+
+  const send = (item) => new Promise((resolve) => {
+    const { f, el } = item;
+    const xhr = new XMLHttpRequest();
+    xhr.open('POST', '/api/upload?path=' + encodeURIComponent(target));
+    xhr.upload.onprogress = (ev) => {
+      if (!ev.lengthComputable) return;
+      const pct = Math.round((ev.loaded / ev.total) * 100);
+      el.querySelector('.bar > i').style.width = pct + '%';
+      el.querySelector('.pct').textContent = pct + '%';
+    };
+    xhr.onload = () => {
+      if (xhr.status >= 200 && xhr.status < 300) {
+        el.classList.add('done');
+        el.querySelector('.bar > i').style.width = '100%';
+        el.querySelector('.pct').textContent = '完成';
+      } else {
+        let msg = '失败';
+        try { msg = JSON.parse(xhr.responseText).error || msg; } catch {}
+        el.classList.add('fail');
+        el.querySelector('.pct').textContent = msg;
+      }
+      done += 1;
+      $('#queueTitle').textContent = `上传中… (${done}/${files.length})`;
+      resolve();
+    };
+    xhr.onerror = () => {
+      el.classList.add('fail');
+      el.querySelector('.pct').textContent = '网络错误';
+      done += 1;
+      resolve();
+    };
+    const fd = new FormData();
+    fd.append('files', f, f.name);
+    xhr.send(fd);
+  });
+
+  (async () => {
+    for (const item of items) await send(item);
+    $('#queueTitle').textContent = '上传完成';
+    toast(`已上传 ${files.length} 个文件`);
+    if (state.path === target) load(target);
+    setTimeout(() => { if (!$('#queue').matches(':hover')) $('#queue').classList.remove('show'); }, 4000);
+  })();
+}
+
+function askName(title, value = '') {
+  $('#modalTitle').textContent = title;
+  const input = $('#modalInput');
+  input.value = value;
+  $('#modalMask').classList.add('show');
+  setTimeout(() => { input.focus(); input.select(); }, 30);
+  return new Promise((resolve) => { state.modalResolve = resolve; });
+}
+
+function closeModal(value) {
+  $('#modalMask').classList.remove('show');
+  const r = state.modalResolve;
+  state.modalResolve = null;
+  if (r) r(value);
+}
+
+let toastTimer;
+function toast(msg, isErr) {
+  const t = $('#toast');
+  t.textContent = msg;
+  t.className = 'toast show' + (isErr ? ' err' : '');
+  clearTimeout(toastTimer);
+  toastTimer = setTimeout(() => { t.className = 'toast'; }, 2600);
+}
+
+$('#uploadBtn').onclick = () => $('#fileInput').click();
+$('#fileInput').onchange = (e) => { uploadFiles(e.target.files); e.target.value = ''; };
+$('#dropzone').onclick = () => $('#fileInput').click();
+$('#refreshBtn').onclick = () => load(state.path);
+$('#searchInput').oninput = (e) => { state.search = e.target.value; renderList(); };
+$('#mkdirBtn').onclick = async () => {
+  const name = await askName('新建文件夹');
+  if (!name) return;
+  try { await api('/api/mkdir', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ path: state.path, name }) }); toast('已创建'); load(state.path); }
+  catch (e) { toast(e.message, true); }
+};
+$('#modalCancel').onclick = () => closeModal(null);
+$('#modalOk').onclick = () => closeModal($('#modalInput').value.trim() || null);
+$('#modalInput').onkeydown = (e) => { if (e.key === 'Enter') closeModal($('#modalInput').value.trim() || null); if (e.key === 'Escape') closeModal(null); };
+$('#modalMask').onclick = (e) => { if (e.target === $('#modalMask')) closeModal(null); };
+$('#queueClose').onclick = () => $('#queue').classList.remove('show');
+
+const dz = $('#dropzone');
+['dragenter', 'dragover'].forEach((ev) => dz.addEventListener(ev, (e) => { e.preventDefault(); dz.classList.add('drag'); }));
+['dragleave', 'drop'].forEach((ev) => dz.addEventListener(ev, (e) => { e.preventDefault(); dz.classList.remove('drag'); }));
+dz.addEventListener('drop', (e) => uploadFiles(e.dataTransfer.files));
+window.addEventListener('dragover', (e) => e.preventDefault());
+window.addEventListener('drop', (e) => e.preventDefault());
+
+/* ------------------------------ 访问密码（锁定） ----------------------------- */
+
+const lockMask = $('#lockMask');
+const lockInput = $('#lockInput');
+const lockMsg = $('#lockMsg');
+let lockMode = 'login'; // 'login' | 'setup'
+
+function renderLock() {
+  const setup = lockMode === 'setup';
+  $('#lockTitle').textContent = setup ? '创建访问密码' : '我的云盘';
+  $('#lockDesc').textContent = setup
+    ? '首次访问，请为这个网盘设置一个访问密码'
+    : '该网盘已启用访问密码，请输入密码以继续';
+  $('#lockInput').placeholder = setup ? '设置新密码（至少 6 位）' : '请输入访问密码';
+  $('#lockInput').setAttribute('autocomplete', setup ? 'new-password' : 'current-password');
+  $('#lockConfirmWrap').style.display = setup ? 'block' : 'none';
+  $('#lockConfirm').value = '';
+  $('#lockSubmit').lastChild.textContent = setup ? '创建并进入' : ' 访问';
+  $('#lockHint').textContent = setup
+    ? '创建后可在网页内随时修改，请牢记该密码'
+    : '密码由网盘所有者提供';
+}
+
+function showLock(msg) {
+  renderLock();
+  lockMask.classList.add('show');
+  lockMsg.textContent = msg || '';
+  setTimeout(() => { lockInput.focus(); lockInput.select(); }, 40);
+}
+
+function hideLock() {
+  lockMask.classList.remove('show');
+  lockMsg.textContent = '';
+  lockInput.value = '';
+  $('#lockConfirm').value = '';
+}
+
+async function doLogin() {
+  const pwd = lockInput.value;
+  lockMsg.textContent = '';
+
+  if (lockMode === 'setup') {
+    if (pwd.length < 6) { lockMsg.textContent = '密码至少 6 位'; lockInput.focus(); return; }
+    if (pwd !== $('#lockConfirm').value) { lockMsg.textContent = '两次输入的密码不一致'; $('#lockConfirm').focus(); return; }
+    try {
+      const r = await fetch('/api/password', {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ newPassword: pwd }),
+      });
+      const data = await r.json().catch(() => ({}));
+      if (!r.ok || data.ok === false) { lockMsg.textContent = data.error || '创建失败'; return; }
+      hideLock();
+      await load(state.path);
+      toast('访问密码已创建');
+    } catch (e) {
+      lockMsg.textContent = '网络错误';
+    }
+    return;
+  }
+
+  if (!pwd) { lockMsg.textContent = '请输入访问密码'; lockInput.focus(); return; }
+  try {
+    const r = await fetch('/api/login', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ password: pwd }),
+    });
+    const data = await r.json().catch(() => ({}));
+    if (data.needSetup) { lockMode = 'setup'; renderLock(); lockMsg.textContent = ''; lockInput.focus(); return; }
+    if (!r.ok || data.ok === false) { lockMsg.textContent = data.error || '密码错误'; lockInput.select(); return; }
+    hideLock();
+    await load(state.path);
+    toast('已解锁');
+  } catch (e) {
+    lockMsg.textContent = '网络错误';
+  }
+}
+
+$('#lockSubmit').onclick = doLogin;
+$('#lockToggle').onclick = () => {
+  const show = lockInput.type === 'password';
+  lockInput.type = show ? 'text' : 'password';
+  $('#lockToggle').title = show ? '隐藏密码' : '显示密码';
+  lockInput.focus();
+};
+lockInput.onkeydown = (e) => { if (e.key === 'Enter') doLogin(); };
+$('#lockConfirm').onkeydown = (e) => { if (e.key === 'Enter') doLogin(); };
+
+$('#logoutBtn').onclick = async () => {
+  try { await api('/api/logout', { method: 'POST' }); } catch {}
+  lockMode = 'login';
+  showLock('已退出，请重新输入访问密码');
+};
+
+/* ------------------------------- 修改访问密码 ------------------------------- */
+
+const pwdMask = $('#pwdMask');
+
+function openPwdModal() {
+  $('#pwdCurrent').value = '';
+  $('#pwdNew').value = '';
+  $('#pwdConfirm').value = '';
+  $('#pwdErr').textContent = '';
+  pwdMask.classList.add('show');
+  setTimeout(() => $('#pwdCurrent').focus(), 30);
+}
+
+function closePwdModal() {
+  pwdMask.classList.remove('show');
+}
+
+async function submitPwd() {
+  const cur = $('#pwdCurrent').value;
+  const nw = $('#pwdNew').value;
+  const cf = $('#pwdConfirm').value;
+  $('#pwdErr').textContent = '';
+  if (!cur) { $('#pwdErr').textContent = '请输入当前密码'; return; }
+  if (nw.length < 6) { $('#pwdErr').textContent = '新密码至少 6 位'; return; }
+  if (nw !== cf) { $('#pwdErr').textContent = '两次输入的新密码不一致'; return; }
+  try {
+    const r = await fetch('/api/password', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ currentPassword: cur, newPassword: nw }),
+    });
+    const data = await r.json().catch(() => ({}));
+    if (data.authRequired) { closePwdModal(); showLock(); return; }
+    if (!r.ok || data.ok === false) { $('#pwdErr').textContent = data.error || '修改失败'; return; }
+    closePwdModal();
+    toast('密码已修改，其他设备的登录状态已失效');
+  } catch (e) {
+    $('#pwdErr').textContent = '网络错误';
+  }
+}
+
+$('#pwdBtn').onclick = openPwdModal;
+$('#pwdCancel').onclick = closePwdModal;
+$('#pwdOk').onclick = submitPwd;
+$('#pwdMask').onclick = (e) => { if (e.target === $('#pwdMask')) closePwdModal(); };
+$('#pwdNew').onkeydown = (e) => { if (e.key === 'Enter') submitPwd(); };
+$('#pwdConfirm').onkeydown = (e) => { if (e.key === 'Enter') submitPwd(); };
+
+(async function boot() {
+  let s;
+  try {
+    s = await fetch('/api/session').then((r) => r.json());
+  } catch (e) {
+    lockMode = 'login';
+    showLock('无法连接服务器');
+    return;
+  }
+  if (!s.passwordSet) { lockMode = 'setup'; showLock(); return; }
+  if (!s.authenticated) { lockMode = 'login'; showLock(); return; }
+  load('');
+})();
+</script>
+</body>
+</html>
