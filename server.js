@@ -4,7 +4,9 @@ const path = require('path');
 const fs = require('fs');
 const crypto = require('crypto');
 
-const PORT = Number(process.env.PORT) || 3000;
+// PORT=0 表示随机端口，需显式判断而不是 Number() || 3000
+const PORT_ENV = process.env.PORT == null || process.env.PORT === '' ? NaN : Number(process.env.PORT);
+const PORT = Number.isInteger(PORT_ENV) && PORT_ENV >= 0 && PORT_ENV < 65536 ? PORT_ENV : 3000;
 // 默认只监听本机；对外暴露请用反向代理，或显式设置 NETDISK_HOST=0.0.0.0
 const HOST = process.env.NETDISK_HOST || process.env.HOST || '127.0.0.1';
 // 存储根目录（启动时取 realpath，后续所有路径校验都以它为准）
@@ -133,6 +135,8 @@ function loadConfig() {
       const { salt, hash } = hashPassword(pw);
       cfg.passwordSalt = salt;
       cfg.passwordHash = hash;
+      // 密码被环境变量轮换后必须递增版本号，使旧会话全部失效
+      cfg.passwordVersion = (typeof cfg.passwordVersion === 'number' ? cfg.passwordVersion : 1) + 1;
     }
     delete cfg.password;
     delete cfg.setupTokenHash;
@@ -231,7 +235,9 @@ function passwordMatches(user, input) {
 }
 
 function validUsername(username) {
-  return typeof username === 'string' && /^[\p{L}\p{N}_.-]{1,32}$/u.test(username);
+  if (typeof username !== 'string' || !/^[\p{L}\p{N}_.-]{1,32}$/u.test(username)) return false;
+  // 拒绝 "." 和 ".." 等纯点用户名，防止路径组件语义歧义
+  return !/^[.]+$/.test(username);
 }
 
 function findUser(username) {
@@ -1041,8 +1047,10 @@ app.use((err, req, res, next) => {
   res.status(status).json({ ok: false, error: err.message || '服务器错误' });
 });
 
-app.listen(PORT, HOST, () => {
-  console.log(`Netdisk listening on http://${HOST}:${PORT}`);
+app.listen(PORT, HOST, function () {
+  const addr = this.address();
+  const boundPort = typeof addr === 'object' && addr ? addr.port : PORT;
+  console.log(`Netdisk listening on http://${HOST}:${boundPort}`);
   console.log(
     passwordIsSet()
       ? 'Netdisk password: 已设置（可在网页内修改）'
