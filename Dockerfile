@@ -14,7 +14,7 @@ ENV PORT=3000 \
     NETDISK_HOST=0.0.0.0
 RUN mkdir -p /app/storage /app/config
 
-VOLUME ["/app/storage"]
+VOLUME ["/app/storage", "/app/storage.users"]
 EXPOSE 3000
 
 HEALTHCHECK --interval=30s --timeout=5s --start-period=5s \

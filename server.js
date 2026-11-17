@@ -13,6 +13,17 @@ const ROOT = (() => {
   fs.mkdirSync(p, { recursive: true });
   return fs.realpathSync(p);
 })();
+const USER_DATA_ROOT = path.resolve(`${ROOT}.users`);
+fs.mkdirSync(USER_DATA_ROOT, { recursive: true, mode: 0o700 });
+if (process.platform !== 'win32') fs.chmodSync(USER_DATA_ROOT, 0o700);
+const REAL_USER_DATA_ROOT = fs.realpathSync(USER_DATA_ROOT);
+if (
+  REAL_USER_DATA_ROOT === ROOT ||
+  REAL_USER_DATA_ROOT.startsWith(ROOT + path.sep) ||
+  ROOT.startsWith(REAL_USER_DATA_ROOT + path.sep)
+) {
+  throw new Error('多用户存储目录必须与现有存储目录分离');
+}
 // 配置文件路径可用 NETDISK_CONFIG 覆盖（Docker 场景把配置放到独立目录，避免单文件挂载被创建成目录）
 const CONFIG_PATH = path.resolve(process.env.NETDISK_CONFIG || path.join(__dirname, 'config.json'));
 const SETUP_TOKEN_PATH = path.join(path.dirname(CONFIG_PATH), '.initial-setup-token');
@@ -104,7 +115,7 @@ function loadConfig() {
     }
   }
   if (!cfg.sessionSecret) cfg.sessionSecret = crypto.randomBytes(32).toString('hex');
-  if (typeof cfg.passwordVersion !== 'number') cfg.passwordVersion = 1;
+  if (!Array.isArray(cfg.users)) cfg.users = [];
   // 兼容旧版明文密码：首次校验成功后转成哈希存储
   if (!cfg.passwordHash && typeof cfg.password === 'string' && cfg.password) {
     const { salt, hash } = hashPassword(cfg.password);
@@ -112,7 +123,7 @@ function loadConfig() {
     cfg.passwordHash = hash;
     delete cfg.password;
   }
-  if (process.env.NETDISK_PASSWORD) {
+  if (process.env.NETDISK_PASSWORD && cfg.users.length === 0) {
     const pw = process.env.NETDISK_PASSWORD;
     const sameAsCurrent =
       cfg.passwordHash &&
@@ -122,13 +133,58 @@ function loadConfig() {
       const { salt, hash } = hashPassword(pw);
       cfg.passwordSalt = salt;
       cfg.passwordHash = hash;
-      // 密码确实变了：递增版本号，作废所有已签发的会话
-      cfg.passwordVersion += 1;
     }
     delete cfg.password;
     delete cfg.setupTokenHash;
   }
-  if (cfg.passwordHash && cfg.passwordSalt) {
+  if (cfg.users.length === 0 && cfg.passwordHash && cfg.passwordSalt) {
+    cfg.users.push({
+      id: 'admin',
+      username: 'admin',
+      salt: cfg.passwordSalt,
+      hash: cfg.passwordHash,
+      role: 'admin',
+      version: typeof cfg.passwordVersion === 'number' ? cfg.passwordVersion : 1,
+      legacyRoot: true,
+    });
+  }
+  if (process.env.NETDISK_PASSWORD && cfg.users.length > 0) {
+    let admin = cfg.users.find((user) => user.role === 'admin');
+    if (!admin) {
+      admin = cfg.users.find((user) => user.username.toLocaleLowerCase('en-US') === 'admin');
+      if (admin) admin.role = 'admin';
+    }
+    if (admin) {
+      const current = crypto.scryptSync(process.env.NETDISK_PASSWORD, admin.salt, 64).toString('hex');
+      if (current !== admin.hash) {
+        const { salt, hash } = hashPassword(process.env.NETDISK_PASSWORD);
+        admin.salt = salt;
+        admin.hash = hash;
+        admin.version = (admin.version || 1) + 1;
+      }
+    } else {
+      const { salt, hash } = hashPassword(process.env.NETDISK_PASSWORD);
+      cfg.users.push({
+        id: 'admin',
+        username: 'admin',
+        salt,
+        hash,
+        role: 'admin',
+        version: 1,
+        legacyRoot: true,
+      });
+    }
+    delete cfg.password;
+    delete cfg.passwordSalt;
+    delete cfg.passwordHash;
+    delete cfg.passwordVersion;
+  }
+  const adminConfigured = cfg.users.some((user) => user.role === 'admin');
+  if (adminConfigured) {
+    delete cfg.password;
+    delete cfg.passwordSalt;
+    delete cfg.passwordHash;
+    delete cfg.passwordVersion;
     delete cfg.setupTokenHash;
     removeSetupTokenFile();
   } else if (!cfg.setupTokenHash || !fs.existsSync(SETUP_TOKEN_PATH)) {
@@ -164,14 +220,33 @@ function hashPassword(pw, salt) {
 }
 
 function passwordIsSet() {
-  return Boolean(CONFIG.passwordHash && CONFIG.passwordSalt);
+  return CONFIG.users.some((user) => user.role === 'admin');
 }
 
-function passwordMatches(input) {
-  if (!passwordIsSet()) return false;
-  const candidate = crypto.scryptSync(String(input == null ? '' : input), CONFIG.passwordSalt, 64);
-  const expected = Buffer.from(CONFIG.passwordHash, 'hex');
+function passwordMatches(user, input) {
+  if (!user || !user.salt || !user.hash) return false;
+  const candidate = crypto.scryptSync(String(input == null ? '' : input), user.salt, 64);
+  const expected = Buffer.from(user.hash, 'hex');
   return candidate.length === expected.length && crypto.timingSafeEqual(candidate, expected);
+}
+
+function validUsername(username) {
+  return typeof username === 'string' && /^[\p{L}\p{N}_.-]{1,32}$/u.test(username);
+}
+
+function findUser(username) {
+  if (typeof username !== 'string') return null;
+  const normalized = username.toLocaleLowerCase('en-US');
+  return CONFIG.users.find((user) => user.username.toLocaleLowerCase('en-US') === normalized) || null;
+}
+
+function publicUser(user) {
+  return {
+    id: user.id,
+    username: user.username,
+    role: user.role,
+    storageMode: user.legacyRoot || user.storageMode === 'shared' ? 'shared' : 'isolated',
+  };
 }
 
 function setupTokenMatches(input) {
@@ -201,9 +276,9 @@ function signPayload(payload) {
   return crypto.createHmac('sha256', CONFIG.sessionSecret).update(payload).digest('base64url');
 }
 
-function issueToken() {
+function issueToken(user) {
   const payload = b64url(
-    JSON.stringify({ exp: Date.now() + SESSION_TTL_MS, ver: CONFIG.passwordVersion })
+    JSON.stringify({ exp: Date.now() + SESSION_TTL_MS, uid: user.id, ver: user.version || 1 })
   );
   return `${payload}.${signPayload(payload)}`;
 }
@@ -220,11 +295,11 @@ function verifyToken(token) {
   try {
     const data = JSON.parse(Buffer.from(payload, 'base64url').toString('utf8'));
     if (typeof data.exp !== 'number' || data.exp <= Date.now()) return false;
-    // 密码变更后旧令牌一律失效
-    if ((data.ver || 1) !== CONFIG.passwordVersion) return false;
-    return true;
+    const user = CONFIG.users.find((item) => item.id === data.uid);
+    if (!user || (data.ver || 1) !== (user.version || 1)) return null;
+    return user;
   } catch {
-    return false;
+    return null;
   }
 }
 
@@ -246,7 +321,7 @@ function parseCookies(req) {
   return out;
 }
 
-function isAuthed(req) {
+function sessionUser(req) {
   return verifyToken(parseCookies(req)[SESSION_COOKIE]);
 }
 
@@ -381,15 +456,28 @@ app.use((req, res, next) => {
 
 /* --------------------------------- 路径处理 -------------------------------- */
 
-function isInsideRoot(abs) {
-  return abs === ROOT || abs.startsWith(ROOT + path.sep);
+function storageRoot(user) {
+  if (user.legacyRoot || user.storageMode === 'shared') return ROOT;
+  if (!/^[a-f0-9]{32}$/.test(user.id)) throw httpError(500, '用户存储目录配置无效');
+  const dir = path.join(REAL_USER_DATA_ROOT, user.id);
+  fs.mkdirSync(dir, { recursive: true, mode: 0o700 });
+  if (process.platform !== 'win32') fs.chmodSync(dir, 0o700);
+  const real = fs.realpathSync(dir);
+  if (!isInsideRoot(real, REAL_USER_DATA_ROOT) || real === REAL_USER_DATA_ROOT) {
+    throw httpError(500, '用户存储目录无效');
+  }
+  return real;
+}
+
+function isInsideRoot(abs, root = ROOT) {
+  return abs === root || abs.startsWith(root + path.sep);
 }
 
 // 字符串前缀比对挡不住符号链接越界：这里解析 realpath 后再判断是否仍在 ROOT 之内
-function resolvePath(rel) {
+function resolvePath(rel, root = ROOT) {
   if (typeof rel !== 'string') throw httpError(400, '路径参数不合法');
-  const abs = path.resolve(ROOT, rel);
-  if (!isInsideRoot(abs)) throw httpError(400, '非法路径');
+  const abs = path.resolve(root, rel);
+  if (!isInsideRoot(abs, root)) throw httpError(400, '非法路径');
 
   // 找到最深的、真实存在的祖先目录，解析其中的符号链接
   let probe = abs;
@@ -406,15 +494,15 @@ function resolvePath(rel) {
   } catch {
     real = probe;
   }
-  if (!isInsideRoot(real)) throw httpError(400, '非法路径');
+  if (!isInsideRoot(real, root)) throw httpError(400, '非法路径');
 
   const resolved = tail.length ? path.join(real, ...tail) : real;
-  if (!isInsideRoot(resolved)) throw httpError(400, '非法路径');
+  if (!isInsideRoot(resolved, root)) throw httpError(400, '非法路径');
   return resolved;
 }
 
-function relOf(abs) {
-  return path.relative(ROOT, abs).split(path.sep).join('/');
+function relOf(abs, root = ROOT) {
+  return path.relative(root, abs).split(path.sep).join('/');
 }
 
 // query 参数必须是单个字符串（?path[]=x 会得到数组，必须拒绝）
@@ -542,14 +630,18 @@ function sessionCookie(req, token, maxAgeSeconds) {
 
 app.post('/api/login', (req, res) => {
   if (!passwordIsSet()) {
-    return res.status(409).json({ ok: false, error: '尚未设置访问密码', needSetup: true });
+    return res.status(409).json({ ok: false, error: '尚未创建管理员账户', needSetup: true });
   }
   const ip = clientIp(req);
   if (loginBlocked(ip)) {
     return res.status(429).json({ ok: false, error: '尝试次数过多，请稍后再试' });
   }
   const { password } = req.body || {};
-  if (!passwordMatches(password)) {
+  const username = req.body && typeof req.body.username === 'string'
+    ? req.body.username
+    : (CONFIG.users.find((item) => item.role === 'admin') || {}).username;
+  const user = findUser(username);
+  if (!passwordMatches(user, password)) {
     noteLoginFail(ip);
     const wait = loginDelay(ip);
     setTimeout(() => {
@@ -562,16 +654,18 @@ app.post('/api/login', (req, res) => {
     return;
   }
   loginFails.delete(ip);
-  res.setHeader('Set-Cookie', sessionCookie(req, issueToken(), Math.floor(SESSION_TTL_MS / 1000)));
-  res.json({ ok: true, expiresIn: SESSION_TTL_MS });
+  res.setHeader('Set-Cookie', sessionCookie(req, issueToken(user), Math.floor(SESSION_TTL_MS / 1000)));
+  res.json({ ok: true, expiresIn: SESSION_TTL_MS, user: publicUser(user) });
 });
 
 app.get('/api/session', (req, res) => {
+  const user = sessionUser(req);
   res.json({
     ok: true,
-    authenticated: isAuthed(req),
+    authenticated: Boolean(user),
     passwordSet: passwordIsSet(),
     requiresPassword: true,
+    user: user ? publicUser(user) : null,
   });
 });
 
@@ -582,20 +676,28 @@ app.post('/api/logout', (req, res) => {
 
 // 设置（首次创建）或修改访问密码
 app.post('/api/password', (req, res) => {
-  const { currentPassword, newPassword, setupToken } = req.body || {};
+  const { currentPassword, newPassword, setupToken, username = 'admin' } = req.body || {};
   const isSetup = !passwordIsSet();
+  let user = null;
 
   if (isSetup) {
     if (!setupTokenMatches(setupToken)) {
       return res.status(403).json({ ok: false, error: '首次设置令牌无效，请从服务器获取最新令牌' });
     }
+    if (!validUsername(username)) {
+      return res.status(400).json({ ok: false, error: '用户名限 1-32 位字母、数字、点、横线或下划线' });
+    }
+    if (findUser(username)) {
+      return res.status(409).json({ ok: false, error: '用户名已存在' });
+    }
   } else {
     // 已设置密码：修改需要先验证当前密码（登录态 + 当前密码双重确认）
-    if (!isAuthed(req)) {
+    user = sessionUser(req);
+    if (!user) {
       return res.status(401).json({ ok: false, error: '需要访问密码', authRequired: true });
     }
     const ip = clientIp(req);
-    if (!passwordMatches(currentPassword)) {
+    if (!passwordMatches(user, currentPassword)) {
       noteLoginFail(ip);
       return res.status(403).json({ ok: false, error: '当前密码不正确' });
     }
@@ -605,15 +707,31 @@ app.post('/api/password', (req, res) => {
   if (policyError) {
     return res.status(400).json({ ok: false, error: policyError });
   }
-  if (!isSetup && passwordMatches(newPassword)) {
+  if (!isSetup && passwordMatches(user, newPassword)) {
     return res.status(400).json({ ok: false, error: '新密码不能与当前密码相同' });
   }
 
   const { salt, hash } = hashPassword(newPassword);
-  CONFIG.passwordSalt = salt;
-  CONFIG.passwordHash = hash;
-  CONFIG.passwordVersion += 1; // 使所有旧会话失效
+  if (isSetup) {
+    user = {
+      id: 'admin',
+      username,
+      salt,
+      hash,
+      role: 'admin',
+      version: 1,
+      legacyRoot: true,
+    };
+    CONFIG.users.push(user);
+  } else {
+    user.salt = salt;
+    user.hash = hash;
+    user.version = (user.version || 1) + 1;
+  }
   delete CONFIG.password;
+  delete CONFIG.passwordSalt;
+  delete CONFIG.passwordHash;
+  delete CONFIG.passwordVersion;
   delete CONFIG.setupTokenHash;
   saveConfig(CONFIG);
   removeSetupTokenFile();
@@ -621,14 +739,72 @@ app.post('/api/password', (req, res) => {
   globalFails = { count: 0, first: Date.now() };
 
   // 重新签发当前会话，保证改完密码后不会被踢出
-  res.setHeader('Set-Cookie', sessionCookie(req, issueToken(), Math.floor(SESSION_TTL_MS / 1000)));
-  res.json({ ok: true, created: isSetup, changed: !isSetup });
+  res.setHeader('Set-Cookie', sessionCookie(req, issueToken(user), Math.floor(SESSION_TTL_MS / 1000)));
+  res.json({ ok: true, created: isSetup, changed: !isSetup, user: publicUser(user) });
 });
 
 // 以下所有 /api/* 接口都需要访问密码
 app.use('/api', (req, res, next) => {
-  if (isAuthed(req)) return next();
+  const user = sessionUser(req);
+  if (user) {
+    req.user = user;
+    return next();
+  }
   res.status(401).json({ ok: false, error: '需要访问密码', authRequired: true });
+});
+
+app.get('/api/users', (req, res) => {
+  if (req.user.role !== 'admin') {
+    return res.status(403).json({ ok: false, error: '仅管理员可管理用户' });
+  }
+  res.json({ users: CONFIG.users.map(publicUser) });
+});
+
+app.post('/api/users', (req, res) => {
+  if (req.user.role !== 'admin') {
+    return res.status(403).json({ ok: false, error: '仅管理员可管理用户' });
+  }
+  const { username, password, storageMode = 'isolated' } = req.body || {};
+  if (!validUsername(username)) {
+    return res.status(400).json({ ok: false, error: '用户名限 1-32 位字母、数字、点、横线或下划线' });
+  }
+  if (storageMode !== 'isolated' && storageMode !== 'shared') {
+    return res.status(400).json({ ok: false, error: '目录模式必须为 isolated 或 shared' });
+  }
+  const policyError = passwordPolicyError(password);
+  if (policyError) return res.status(400).json({ ok: false, error: policyError });
+  if (findUser(username)) return res.status(409).json({ ok: false, error: '用户名已存在' });
+  const { salt, hash } = hashPassword(password);
+  const user = {
+    id: crypto.randomBytes(16).toString('hex'),
+    username,
+    salt,
+    hash,
+    role: 'user',
+    version: 1,
+    storageMode,
+  };
+  if (storageMode === 'isolated') storageRoot(user);
+  CONFIG.users.push(user);
+  saveConfig(CONFIG);
+  res.status(201).json({ ok: true, user: publicUser(user) });
+});
+
+app.delete('/api/users/:id', (req, res) => {
+  if (req.user.role !== 'admin') {
+    return res.status(403).json({ ok: false, error: '仅管理员可管理用户' });
+  }
+  const user = CONFIG.users.find((item) => item.id === req.params.id);
+  if (!user) return res.status(404).json({ ok: false, error: '用户不存在' });
+  if (user.role === 'admin' || user.id === req.user.id) {
+    return res.status(400).json({ ok: false, error: '不能删除管理员账户' });
+  }
+  const userRoot = user.storageMode === 'shared' ? null : storageRoot(user);
+  const users = CONFIG.users.filter((item) => item.id !== user.id);
+  saveConfig({ ...CONFIG, users });
+  CONFIG.users = users;
+  if (userRoot) fs.rmSync(userRoot, { recursive: true, force: true });
+  res.json({ ok: true });
 });
 
 /* --------------------------------- 存储接口 -------------------------------- */
@@ -648,7 +824,7 @@ function decodeUploadName(raw) {
 const storage = multer.diskStorage({
   destination(req, file, cb) {
     try {
-      const dir = resolvePath(queryPath(req));
+      const dir = resolvePath(queryPath(req), storageRoot(req.user));
       if (!fs.existsSync(dir) || !fs.statSync(dir).isDirectory()) {
         return cb(httpError(400, '目标文件夹不存在'));
       }
@@ -663,7 +839,7 @@ const storage = multer.diskStorage({
       if (!validName(original)) {
         return cb(httpError(400, '文件名不合法'));
       }
-      const dir = resolvePath(queryPath(req));
+      const dir = resolvePath(queryPath(req), storageRoot(req.user));
       cb(null, uniqueName(dir, original));
     } catch (err) {
       cb(err);
@@ -678,8 +854,9 @@ const upload = multer({
 
 app.get('/api/list', (req, res, next) => {
   try {
+    const root = storageRoot(req.user);
     const rel = queryPath(req);
-    const abs = resolvePath(rel);
+    const abs = resolvePath(rel, root);
     if (!fs.existsSync(abs)) {
       throw httpError(404, '文件夹不存在');
     }
@@ -716,7 +893,7 @@ app.get('/api/list', (req, res, next) => {
         if (a.type !== b.type) return a.type === 'dir' ? -1 : 1;
         return a.name.localeCompare(b.name, 'zh-CN');
       });
-    const current = relOf(abs);
+    const current = relOf(abs, root);
     const parts = current ? current.split('/') : [];
     const breadcrumb = [{ name: '我的云盘', path: '' }];
     let acc = '';
@@ -732,7 +909,7 @@ app.get('/api/list', (req, res, next) => {
 
 app.get('/api/stats', (req, res, next) => {
   try {
-    const stats = walkStats(ROOT, { bytes: 0, files: 0 });
+    const stats = walkStats(storageRoot(req.user), { bytes: 0, files: 0 });
     res.json(stats);
   } catch (err) {
     next(err);
@@ -749,7 +926,7 @@ app.post('/api/upload', upload.array('files', 100), (req, res) => {
 
 app.get('/api/download', (req, res, next) => {
   try {
-    const abs = resolvePath(queryPath(req));
+    const abs = resolvePath(queryPath(req), storageRoot(req.user));
     if (!fs.existsSync(abs) || !fs.statSync(abs).isFile()) {
       throw httpError(404, '文件不存在');
     }
@@ -762,7 +939,7 @@ app.get('/api/download', (req, res, next) => {
 
 app.get('/api/preview', (req, res, next) => {
   try {
-    const abs = resolvePath(queryPath(req));
+    const abs = resolvePath(queryPath(req), storageRoot(req.user));
     if (!fs.existsSync(abs) || !fs.statSync(abs).isFile()) {
       throw httpError(404, '文件不存在');
     }
@@ -801,7 +978,8 @@ app.post('/api/mkdir', (req, res, next) => {
     if (!validName(name)) {
       throw httpError(400, '文件夹名不合法');
     }
-    const dir = resolvePath(rel);
+    const root = storageRoot(req.user);
+    const dir = resolvePath(rel, root);
     if (!fs.existsSync(dir) || !fs.statSync(dir).isDirectory()) {
       throw httpError(400, '目标文件夹不存在');
     }
@@ -822,8 +1000,9 @@ app.post('/api/delete', (req, res, next) => {
     if (!rel) {
       throw httpError(400, '不能删除根目录');
     }
-    const abs = resolvePath(rel);
-    if (abs === ROOT || !fs.existsSync(abs)) {
+    const root = storageRoot(req.user);
+    const abs = resolvePath(rel, root);
+    if (abs === root || !fs.existsSync(abs)) {
       throw httpError(404, '目标不存在');
     }
     fs.rmSync(abs, { recursive: true, force: true });
@@ -839,7 +1018,7 @@ app.post('/api/rename', (req, res, next) => {
     if (!rel || !validName(name)) {
       throw httpError(400, '参数不合法');
     }
-    const abs = resolvePath(rel);
+    const abs = resolvePath(rel, storageRoot(req.user));
     if (!fs.existsSync(abs)) {
       throw httpError(404, '目标不存在');
     }

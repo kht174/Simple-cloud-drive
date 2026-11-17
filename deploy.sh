@@ -104,10 +104,7 @@ if [[ ! -f "$CONFIG_FILE" ]]; then
     const fs = require('fs'), crypto = require('crypto'), path = require('path');
     const p = process.env.NETDISK_CONFIG || 'config.json';
     fs.mkdirSync(path.dirname(p), { recursive: true });
-    const cfg = {
-      sessionSecret: crypto.randomBytes(32).toString('hex'),
-      passwordVersion: 1,
-    };
+    const cfg = { sessionSecret: crypto.randomBytes(32).toString('hex'), users: [] };
     fs.writeFileSync(p, JSON.stringify(cfg, null, 2) + '\n');
     fs.chmodSync(p, 0o600);
   "
@@ -123,15 +120,37 @@ if [[ -n "$PRESET_PASSWORD" ]]; then
     const p = process.env.NETDISK_CONFIG || 'config.json';
     const cfg = JSON.parse(fs.readFileSync(p, 'utf8'));
     const salt = crypto.randomBytes(16).toString('hex');
-    cfg.passwordSalt = salt;
-    cfg.passwordHash = crypto.scryptSync(process.argv[1], salt, 64).toString('hex');
-    cfg.passwordVersion = (cfg.passwordVersion || 1) + 1;
+    const hash = crypto.scryptSync(process.argv[1], salt, 64).toString('hex');
+    if (Array.isArray(cfg.users) && cfg.users.length > 0) {
+      let admin = cfg.users.find(user => user.role === 'admin');
+      if (!admin) {
+        admin = cfg.users.find(user => user.username.toLowerCase() === 'admin');
+        if (admin) admin.role = 'admin';
+      }
+      if (admin) {
+        admin.salt = salt;
+        admin.hash = hash;
+        admin.version = (admin.version || 1) + 1;
+      } else {
+        cfg.users.push({
+          id: 'admin', username: 'admin', salt, hash,
+          role: 'admin', version: 1, legacyRoot: true,
+        });
+      }
+      delete cfg.passwordSalt;
+      delete cfg.passwordHash;
+      delete cfg.passwordVersion;
+    } else {
+      cfg.passwordSalt = salt;
+      cfg.passwordHash = hash;
+      cfg.passwordVersion = (cfg.passwordVersion || 1) + 1;
+    }
     delete cfg.password;
     delete cfg.setupTokenHash;
     fs.writeFileSync(p, JSON.stringify(cfg, null, 2) + '\n');
     fs.chmodSync(p, 0o600);
   " "$PRESET_PASSWORD"
-  ok "已预设访问密码（以 scrypt 散列存储，不含明文）"
+  ok "已预设管理员密码（以 scrypt 散列存储，不含明文）"
 else
   ok "未预设密码 —— 启动后需使用服务器生成的一次性初始化令牌"
 fi
@@ -172,7 +191,10 @@ PASSWORD_IS_SET="$(node -e "
   const fs = require('fs');
   try {
     const config = JSON.parse(fs.readFileSync(process.env.NETDISK_CONFIG || 'config.json', 'utf8'));
-    process.stdout.write(config.passwordHash && config.passwordSalt ? '1' : '0');
+    const adminSet = Array.isArray(config.users)
+      ? config.users.some(user => user.role === 'admin')
+      : config.passwordHash && config.passwordSalt;
+    process.stdout.write(adminSet ? '1' : '0');
   } catch (e) {
     process.stdout.write('0');
   }

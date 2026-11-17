@@ -49,7 +49,9 @@ start() {
       const p = process.env.NETDISK_CONFIG || 'config.json';
       let c = {};
       try { c = JSON.parse(fs.readFileSync(p, 'utf8')); } catch (e) {}
-      const passwordSet = Boolean(c.passwordHash && c.passwordSalt);
+      const passwordSet = Array.isArray(c.users)
+        ? c.users.some(u => u.role === 'admin')
+        : Boolean(c.passwordHash && c.passwordSalt);
       console.log(passwordSet ? '访问密码: 已设置（可在网页内修改）' : '访问密码: 未设置，请使用服务器的一次性初始化令牌创建');
       if (!passwordSet) console.log('首次设置令牌: ./netdisk.sh show-setup-token（创建密码后失效）');
     "
@@ -63,14 +65,16 @@ reset_password() {
     const fs = require('fs');
     const p = process.env.NETDISK_CONFIG || 'config.json';
     const c = JSON.parse(fs.readFileSync(p, 'utf8'));
+    if (Array.isArray(c.users)) c.users = c.users.filter(u => u.role !== 'admin');
     delete c.passwordHash;
     delete c.passwordSalt;
     delete c.password;
-    c.passwordVersion = (c.passwordVersion || 1) + 1;
+    delete c.passwordVersion;
+    delete c.setupTokenHash;
     fs.writeFileSync(p, JSON.stringify(c, null, 2) + '\n');
     fs.chmodSync(p, 0o600);
   "
-  echo "已清除访问密码，下次访问网页将重新提示创建"
+  echo "已移除管理员账户；普通用户与其文件保留，下次启动需重新创建管理员"
   if is_running; then
     echo "正在重启服务使改动生效…"
     stop; sleep 1; start

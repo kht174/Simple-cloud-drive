@@ -6,6 +6,8 @@ netdisk.env
 
 # 用户文件
 storage/
+storage.users/
+storage-users/
 
 # 依赖与日志
 node_modules/

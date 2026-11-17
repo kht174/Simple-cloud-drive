@@ -21,6 +21,7 @@ services:
       # NETDISK_PASSWORD: "your-password-here"
     volumes:
       - ./storage:/app/storage
+      - ./storage-users:/app/storage.users
       - netdisk-config:/app/config
 
 volumes:

@@ -112,7 +112,13 @@
   .modal h3 { margin: 0 0 14px; font-size: 16px; }
   .modal input { width: 100%; padding: 11px 12px; border: 1px solid var(--line); border-radius: 10px; font-size: 14px; outline: none; }
   .modal input:focus { border-color: var(--accent); box-shadow: 0 0 0 3px rgba(59,108,246,.12); }
+  .modal select { width: 100%; padding: 11px 12px; border: 1px solid var(--line); border-radius: 10px; font-size: 14px; background: #fff; }
   .modal .foot { display: flex; justify-content: flex-end; gap: 10px; margin-top: 18px; }
+  .user-list { max-height: 180px; overflow: auto; margin: 12px 0; }
+  .user-row { display: flex; justify-content: space-between; align-items: center; gap: 10px; padding: 8px 0; border-bottom: 1px solid var(--line); font-size: 13px; }
+  .remember-option { display: flex; align-items: center; gap: 7px; margin-top: 10px; color: var(--muted); font-size: 12.5px; cursor: pointer; }
+  .remember-option input { width: auto; margin: 0; }
+  .form-hint { margin: 6px 0 12px; color: var(--muted); font-size: 12px; line-height: 1.5; }
 
   .toast { position: fixed; left: 50%; top: 20px; transform: translate(-50%, -12px); background: #1f2430; color: #fff; padding: 10px 16px; border-radius: 10px; font-size: 13px; opacity: 0; pointer-events: none; transition: .2s; z-index: 30; max-width: 90vw; }
   .toast.show { opacity: 1; transform: translate(-50%, 0); }
@@ -194,6 +200,7 @@
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 2l-2 2m-7.6 7.6a5.5 5.5 0 1 1-7.8 7.8 5.5 5.5 0 0 1 7.8-7.8zm0 0L15.5 7.5m0 0l3 3L22 7l-3-3m-3.5 3.5L19 4"/></svg>
         修改密码
       </button>
+      <button class="btn" id="usersBtn" style="display:none">用户管理</button>
       <button class="btn" id="logoutBtn" title="退出并清除访问状态">
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="4" y="10" width="16" height="11" rx="2"/><path d="M8 10V7a4 4 0 0 1 8 0v3"/></svg>
         退出
@@ -252,11 +259,18 @@
     <h2 id="lockTitle">我的云盘</h2>
     <p id="lockDesc">该网盘已启用访问密码，请输入密码以继续</p>
     <div class="field">
+      <input id="lockUsername" type="text" placeholder="用户名" autocomplete="username" maxlength="32" />
+    </div>
+    <div class="field">
       <input id="lockInput" type="password" placeholder="请输入访问密码" autocomplete="current-password" />
       <button class="toggle" id="lockToggle" title="显示密码">
         <svg viewBox="0 0 24 24" width="17" height="17" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><path d="M2 12s3.6-7 10-7 10 7 10 7-3.6 7-10 7S2 12 2 12z"/><circle cx="12" cy="12" r="3"/></svg>
       </button>
     </div>
+    <label class="remember-option" id="rememberUsernameWrap" for="rememberUsername">
+      <input id="rememberUsername" type="checkbox" />
+      记住用户名
+    </label>
     <div class="field" id="lockConfirmWrap" style="display:none; margin-top:10px">
       <input id="lockConfirm" type="password" placeholder="再次输入新密码" autocomplete="new-password" />
     </div>
@@ -268,7 +282,7 @@
       访问
     </button>
     <div class="lock-msg" id="lockMsg"></div>
-    <div class="lock-hint" id="lockHint">密码由网盘所有者提供</div>
+    <div class="lock-hint" id="lockHint">每位用户使用自己的账户登录</div>
   </div>
 </div>
 
@@ -286,9 +300,29 @@
   </div>
 </div>
 
+<div class="modal-mask" id="usersMask">
+  <div class="modal">
+    <h3>用户管理</h3>
+    <div id="usersList" class="user-list"></div>
+    <input id="newUsername" placeholder="新用户名" autocomplete="off" />
+    <input id="newUserPassword" type="password" placeholder="初始密码（至少 6 位）" autocomplete="new-password" style="margin-top:10px" />
+    <label for="newUserStorageMode" style="display:block; margin-top:12px; font-size:13px">文件目录</label>
+    <select id="newUserStorageMode">
+      <option value="isolated">独立目录</option>
+      <option value="shared">与管理员共享目录</option>
+    </select>
+    <div class="form-hint">共享目录中的文件对管理员及所有共享用户可见、可修改或删除。</div>
+    <div class="lock-msg" id="usersErr" style="text-align:left"></div>
+    <div class="foot">
+      <button class="btn" id="usersClose">关闭</button>
+      <button class="btn primary" id="usersCreate">创建用户</button>
+    </div>
+  </div>
+</div>
+
 <script>
 const $ = (sel) => document.querySelector(sel);
-const state = { path: '', entries: [], search: '', modalResolve: null, uploading: 0 };
+const state = { path: '', entries: [], search: '', modalResolve: null, uploading: 0, user: null };
 
 const icons = {
   dir: '<svg class="ico dir" viewBox="0 0 24 24" fill="currentColor"><path d="M3 6a2 2 0 0 1 2-2h4.6l2 2H19a2 2 0 0 1 2 2v9a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/></svg>',
@@ -540,23 +574,44 @@ const lockMask = $('#lockMask');
 const lockInput = $('#lockInput');
 const lockMsg = $('#lockMsg');
 let lockMode = 'login'; // 'login' | 'setup'
+const REMEMBERED_USERNAME_KEY = 'netdisk.rememberedUsername';
+
+function getRememberedUsername() {
+  try { return localStorage.getItem(REMEMBERED_USERNAME_KEY) || ''; } catch { return ''; }
+}
+
+function setRememberedUsername(username, enabled) {
+  try {
+    if (enabled && username) localStorage.setItem(REMEMBERED_USERNAME_KEY, username);
+    else localStorage.removeItem(REMEMBERED_USERNAME_KEY);
+  } catch {
+    toast('浏览器未允许保存用户名', true);
+  }
+}
 
 function renderLock() {
   const setup = lockMode === 'setup';
-  $('#lockTitle').textContent = setup ? '创建访问密码' : '我的云盘';
+  $('#lockTitle').textContent = setup ? '创建管理员账户' : '我的云盘';
   $('#lockDesc').textContent = setup
-    ? '首次访问，请为这个网盘设置一个访问密码'
-    : '该网盘已启用访问密码，请输入密码以继续';
+    ? '首次访问，请创建管理员账户'
+    : '请输入你的用户名和密码以继续';
+  $('#lockUsername').placeholder = setup ? '管理员用户名' : '用户名';
+  $('#rememberUsernameWrap').style.display = setup ? 'none' : 'flex';
+  const savedUsername = getRememberedUsername();
+  $('#rememberUsername').checked = !setup && Boolean(savedUsername);
+  $('#lockUsername').value = setup
+    ? ($('#lockUsername').value || 'admin')
+    : ($('#lockUsername').value || savedUsername);
   $('#lockInput').placeholder = setup ? '设置新密码（至少 6 位）' : '请输入访问密码';
-  $('#lockInput').setAttribute('autocomplete', setup ? 'new-password' : 'current-password');
+  $('#lockInput').setAttribute('autocomplete', setup ? 'new-password' : 'off');
   $('#lockConfirmWrap').style.display = setup ? 'block' : 'none';
   $('#lockConfirm').value = '';
   $('#setupTokenWrap').style.display = setup ? 'block' : 'none';
   $('#setupToken').value = '';
   $('#lockSubmit').lastChild.textContent = setup ? '创建并进入' : ' 访问';
   $('#lockHint').textContent = setup
-    ? '请先从服务器获取一次性初始化令牌；创建后即可在网页内修改密码'
-    : '密码由网盘所有者提供';
+    ? '使用服务器的一次性令牌创建管理员；随后由管理员添加用户'
+    : '管理员创建账户后，请使用分配给你的用户名和密码登录';
 }
 
 function showLock(msg) {
@@ -575,18 +630,22 @@ function hideLock() {
 
 async function doLogin() {
   const pwd = lockInput.value;
+  const username = $('#lockUsername').value.trim();
   lockMsg.textContent = '';
 
   if (lockMode === 'setup') {
+    if (!username) { lockMsg.textContent = '请输入管理员用户名'; $('#lockUsername').focus(); return; }
     if (pwd.length < 6) { lockMsg.textContent = '密码至少 6 位'; lockInput.focus(); return; }
     if (pwd !== $('#lockConfirm').value) { lockMsg.textContent = '两次输入的密码不一致'; $('#lockConfirm').focus(); return; }
     try {
       const r = await fetch('/api/password', {
         method: 'POST', headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ newPassword: pwd, setupToken: $('#setupToken').value.trim() }),
+        body: JSON.stringify({ username, newPassword: pwd, setupToken: $('#setupToken').value.trim() }),
       });
       const data = await r.json().catch(() => ({}));
       if (!r.ok || data.ok === false) { lockMsg.textContent = data.error || '创建失败'; return; }
+      state.user = data.user;
+      $('#usersBtn').style.display = state.user && state.user.role === 'admin' ? '' : 'none';
       hideLock();
       await load(state.path);
       toast('访问密码已创建');
@@ -596,15 +655,18 @@ async function doLogin() {
     return;
   }
 
-  if (!pwd) { lockMsg.textContent = '请输入访问密码'; lockInput.focus(); return; }
+  if (!username || !pwd) { lockMsg.textContent = '请输入用户名和密码'; (!username ? $('#lockUsername') : lockInput).focus(); return; }
+  setRememberedUsername(username, $('#rememberUsername').checked);
   try {
     const r = await fetch('/api/login', {
       method: 'POST', headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ password: pwd }),
+      body: JSON.stringify({ username, password: pwd }),
     });
     const data = await r.json().catch(() => ({}));
     if (data.needSetup) { lockMode = 'setup'; renderLock(); lockMsg.textContent = ''; lockInput.focus(); return; }
     if (!r.ok || data.ok === false) { lockMsg.textContent = data.error || '密码错误'; lockInput.select(); return; }
+    state.user = data.user;
+    $('#usersBtn').style.display = state.user && state.user.role === 'admin' ? '' : 'none';
     hideLock();
     await load(state.path);
     toast('已解锁');
@@ -614,6 +676,9 @@ async function doLogin() {
 }
 
 $('#lockSubmit').onclick = doLogin;
+$('#rememberUsername').onchange = () => {
+  setRememberedUsername($('#lockUsername').value.trim(), $('#rememberUsername').checked);
+};
 $('#lockToggle').onclick = () => {
   const show = lockInput.type === 'password';
   lockInput.type = show ? 'text' : 'password';
@@ -621,6 +686,7 @@ $('#lockToggle').onclick = () => {
   lockInput.focus();
 };
 lockInput.onkeydown = (e) => { if (e.key === 'Enter') doLogin(); };
+$('#lockUsername').onkeydown = (e) => { if (e.key === 'Enter') doLogin(); };
 $('#lockConfirm').onkeydown = (e) => { if (e.key === 'Enter') doLogin(); };
 $('#setupToken').onkeydown = (e) => { if (e.key === 'Enter') doLogin(); };
 
@@ -677,6 +743,64 @@ $('#pwdMask').onclick = (e) => { if (e.target === $('#pwdMask')) closePwdModal()
 $('#pwdNew').onkeydown = (e) => { if (e.key === 'Enter') submitPwd(); };
 $('#pwdConfirm').onkeydown = (e) => { if (e.key === 'Enter') submitPwd(); };
 
+async function refreshUsers() {
+  const data = await api('/api/users');
+  $('#usersList').innerHTML = data.users.map((user) => `
+    <div class="user-row" data-id="${escapeHtml(user.id)}">
+      <span>${escapeHtml(user.username)}（${user.role === 'admin' ? '管理员' : user.storageMode === 'shared' ? '共享目录' : '独立目录'}）</span>
+      ${user.role === 'admin' ? '' : '<button class="btn" data-remove-user>删除</button>'}
+    </div>`).join('');
+  $('#usersList').querySelectorAll('[data-remove-user]').forEach((button) => {
+    button.onclick = async () => {
+      const row = button.closest('.user-row');
+      const username = row.querySelector('span').textContent;
+      const shared = data.users.find((user) => user.id === row.dataset.id)?.storageMode === 'shared';
+      const warning = shared ? '该账户使用共享目录，文件不会删除。' : '该用户的全部文件将被删除，此操作不可恢复。';
+      if (!confirm(`确定删除用户「${username}」？${warning}`)) return;
+      try {
+        await api('/api/users/' + encodeURIComponent(row.dataset.id), { method: 'DELETE' });
+        await refreshUsers();
+      } catch (e) {
+        $('#usersErr').textContent = e.message;
+      }
+    };
+  });
+}
+
+$('#usersBtn').onclick = async () => {
+  $('#usersErr').textContent = '';
+  $('#newUsername').value = '';
+  $('#newUserPassword').value = '';
+  $('#newUserStorageMode').value = 'isolated';
+  $('#usersMask').classList.add('show');
+  try { await refreshUsers(); } catch (e) { $('#usersErr').textContent = e.message; }
+};
+$('#usersClose').onclick = () => $('#usersMask').classList.remove('show');
+$('#usersMask').onclick = (e) => { if (e.target === $('#usersMask')) $('#usersMask').classList.remove('show'); };
+$('#usersCreate').onclick = async () => {
+  const username = $('#newUsername').value.trim();
+  const password = $('#newUserPassword').value;
+  const storageMode = $('#newUserStorageMode').value;
+  $('#usersErr').textContent = '';
+  if (!username || password.length < 6) {
+    $('#usersErr').textContent = '请输入用户名和至少 6 位密码';
+    return;
+  }
+  try {
+    await api('/api/users', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ username, password, storageMode }),
+    });
+    $('#newUsername').value = '';
+    $('#newUserPassword').value = '';
+    await refreshUsers();
+    toast('用户已创建');
+  } catch (e) {
+    $('#usersErr').textContent = e.message;
+  }
+};
+
 (async function boot() {
   let s;
   try {
@@ -688,6 +812,8 @@ $('#pwdConfirm').onkeydown = (e) => { if (e.key === 'Enter') submitPwd(); };
   }
   if (!s.passwordSet) { lockMode = 'setup'; showLock(); return; }
   if (!s.authenticated) { lockMode = 'login'; showLock(); return; }
+  state.user = s.user;
+  $('#usersBtn').style.display = s.user && s.user.role === 'admin' ? '' : 'none';
   load('');
 })();
 </script>

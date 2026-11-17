@@ -1,8 +1,17 @@
 {
-  "_comment": "配置示例。首次启动时自动生成 config.json（随机 sessionSecret，权限 600）；可用 NETDISK_CONFIG 指定其它路径（Docker 部署使用）。此文件仅为字段说明，不含任何真实密钥。",
-
-  "sessionSecret": "启动时自动生成的 64 位十六进制随机串，用于签名会话令牌，请勿泄露",
-  "passwordVersion": 1,
-  "passwordSalt": "密码散列的盐值（十六进制），设置密码时自动生成",
-  "passwordHash": "scrypt 派生的密码散列（128 位十六进制），不是明文；未设置密码时该字段不存在"
+  "_comment": "启动时自动生成 config.json（权限 600）。用户密码只保存为 scrypt 散列；首次启动生成一次性管理员设置令牌。",
+  "sessionSecret": "启动时自动生成的随机会话签名密钥，请勿泄露",
+  "users": [
+    {
+      "id": "服务器生成的用户 ID",
+      "username": "用户名",
+      "salt": "随机密码盐值",
+      "hash": "scrypt 密码散列，不是明文",
+      "role": "admin 或 user",
+      "storageMode": "shared 或 isolated",
+      "version": 1,
+      "legacyRoot": true
+    }
+  ],
+  "setupTokenHash": "仅首次创建管理员前存在的一次性令牌 SHA-256 散列"
 }
