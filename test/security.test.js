@@ -85,7 +85,10 @@ test('first password requires the one-time setup token and consumes it', async (
   const tokenPath = path.join(server.dir, '.initial-setup-token');
   const token = fs.readFileSync(tokenPath, 'utf8').trim();
 
-  assert.equal(fs.statSync(tokenPath).mode & 0o777, 0o600);
+  // Windows 不支持 POSIX 权限位（mode 恒为 0o666），该断言仅在 POSIX 系统上执行
+  if (process.platform !== 'win32') {
+    assert.equal(fs.statSync(tokenPath).mode & 0o777, 0o600);
+  }
   const denied = await postJson(`${server.url}/api/password`, { newPassword: 'strong-pass' }, {
     Origin: server.url,
   });
